@@ -1,0 +1,74 @@
+//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using TouchSocket.Rpc;
+using TouchSocket.WebApi;
+
+namespace TouchSocket.Core;
+
+/// <summary>
+/// WebApi插件管理器扩展
+/// </summary>
+public static class WebApiPluginManagerExtension
+{
+    /// <summary>
+    /// 使用WebApi的插件。仅服务器可用。
+    /// </summary>
+    /// <param name="pluginManager">插件管理器</param>
+    /// <param name="options">WebApi配置选项</param>
+    /// <returns>WebApi解析插件</returns>
+    public static WebApiParserPlugin UseWebApi(this IPluginManager pluginManager, Action<WebApiOption> options)
+    {
+        var resolver = pluginManager.Resolver;
+        WebApiOption option = new WebApiOption();
+
+        options.Invoke(option);
+
+        var webApiParserPlugin = new WebApiParserPlugin(resolver.Resolve<IRpcServerProvider>(), option);
+
+        pluginManager.Add(webApiParserPlugin);
+
+        return webApiParserPlugin;
+    }
+
+    /// <summary>
+    /// 使用WebApi的插件。仅服务器可用。
+    /// </summary>
+    /// <param name="pluginManager">插件管理器</param>
+    /// <returns>WebApi解析插件</returns>
+    public static WebApiParserPlugin UseWebApi(this IPluginManager pluginManager)
+    {
+        return UseWebApi(pluginManager, options => { });
+    }
+
+    /// <summary>
+    /// 使用 <see cref="OpenApiPlugin"/> 插件，在 <c>/{Prefix}/openapi.json</c> 提供 OpenApi JSON 文档。
+    /// </summary>
+    /// <param name="pluginManager">插件管理器</param>
+    /// <param name="options">OpenApi 配置选项</param>
+    public static void UseOpenApi(this IPluginManager pluginManager, Action<OpenApiOption> options)
+    {
+        var option = new OpenApiOption();
+        options.Invoke(option);
+        var plugin = new OpenApiPlugin(pluginManager.Resolver.Resolve<ILog>(), option);
+        pluginManager.Add(plugin);
+    }
+
+    /// <summary>
+    /// 使用 <see cref="OpenApiPlugin"/> 插件，在 <c>/openapi/openapi.json</c> 提供 OpenApi JSON 文档。
+    /// </summary>
+    /// <param name="pluginManager">插件管理器</param>
+    public static void UseOpenApi(this IPluginManager pluginManager)
+    {
+        pluginManager.UseOpenApi(options => { });
+    }
+}

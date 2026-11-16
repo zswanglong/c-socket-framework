@@ -1,0 +1,545 @@
+//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.Buffers;
+using System.Collections.Concurrent;
+using TouchSocket.Core;
+using TouchSocket.Sockets;
+
+namespace TouchSocket.Mqtt;
+
+/// <inheritdoc/>
+public abstract class MqttActor : DisposableObject, IOnlineClient
+{
+    #region 字段
+
+    private readonly ConcurrentDictionary<ushort, PooledArrivedMessage> m_qos2MqttArrivedMessage = new();
+    private readonly CancellationTokenSource m_tokenSource = new();
+    private readonly WaitHandlePool<MqttIdentifierMessage> m_waitHandlePool = new(1, ushort.MaxValue);
+    private readonly WaitDataAsync<MqttPingRespMessage> m_waitForPing = new();
+
+    #endregion 字段
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (this.DisposedValue)
+        {
+            return;
+        }
+        base.Dispose(disposing);
+
+        if (disposing)
+        {
+            this.m_tokenSource.SafeCancel();
+            this.m_tokenSource.SafeDispose();
+            this.m_waitHandlePool.CancelAll();
+            this.m_waitForPing.Cancel();
+            this.m_waitForPing.SafeDispose();
+        }
+    }
+
+    /// <summary>
+    /// 取消所有已挂起的等待操作。当底层连接断开时应调用此方法。
+    /// </summary>
+    public virtual void CancelPendingOperations()
+    {
+        this.m_waitHandlePool.CancelAll();
+        this.m_waitForPing.Cancel();
+    }
+
+    /// <inheritdoc/>
+    protected virtual Task PublishMessageArrivedAsync(MqttArrivedMessage message)
+    {
+        if (this.MessageArrived != null)
+        {
+            var args = new MqttReceivedEventArgs(message);
+            return this.MessageArrived(this, args);
+        }
+        else
+        {
+            return EasyTask.CompletedTask;
+        }
+    }
+
+    #region 属性
+
+    /// <inheritdoc/>
+    public string Id { get; protected set; }
+
+    /// <inheritdoc/>
+    public bool Online { get; protected set; }
+
+    /// <inheritdoc/>
+    public CancellationTokenSource TokenSource => this.m_tokenSource;
+
+    /// <inheritdoc/>
+    public WaitHandlePool<MqttIdentifierMessage> WaitHandlePool => this.m_waitHandlePool;
+
+    #endregion 属性
+
+    #region Ping
+
+    /// <summary>
+    /// 向对端发送 PING 请求并等待响应。客户端和服务端均可发起。
+    /// </summary>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>操作结果。</returns>
+    public async ValueTask<Result> PingAsync(CancellationToken cancellationToken)
+    {
+        var contentForAck = new MqttPingReqMessage();
+        this.m_waitForPing.Reset();
+        await this.ProtectedOutputSendAsync(contentForAck, cancellationToken).ConfigureDefaultAwait();
+        var waitDataStatus = await this.m_waitForPing.WaitAsync(cancellationToken).ConfigureDefaultAwait();
+
+        return waitDataStatus switch
+        {
+            WaitDataStatus.Default => Result.UnknownFail,
+            WaitDataStatus.Success => Result.Success,
+            WaitDataStatus.Overtime => Result.Overtime,
+            WaitDataStatus.Canceled => Result.Canceled,
+            WaitDataStatus.Disposed => Result.Disposed,
+            _ => Result.UnknownFail,
+        };
+    }
+
+    #endregion Ping
+
+    #region Publish
+
+    /// <inheritdoc/>
+    public Task PublishAsync(MqttPublishMessage message, CancellationToken cancellationToken)
+    {
+        switch (message.QosLevel)
+        {
+            case QosLevel.AtLeastOnce:
+                return this.PublishAtLeastOnceMessageAsync(message, cancellationToken);
+            case QosLevel.ExactlyOnce:
+                return this.PublishExactlyOnceMessageAsync(message, cancellationToken);
+            case QosLevel.AtMostOnce:
+            default:
+                return this.PublishAtMostOnceMessageAsync(message, cancellationToken);
+        }
+    }
+
+    private async Task PublishAtLeastOnceMessageAsync(MqttPublishMessage message, CancellationToken cancellationToken)
+    {
+        using (var waitDataAsync = this.m_waitHandlePool.GetWaitDataAsync(message))
+        {
+            await this.ProtectedOutputSendAsync(message, cancellationToken).ConfigureDefaultAwait();
+
+            var waitDataStatus = await waitDataAsync.WaitAsync(cancellationToken).ConfigureDefaultAwait();
+            waitDataStatus.ThrowIfNotRunning();
+
+            if (waitDataAsync.CompletedData is MqttPubAckMessage pubAckMessage)
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task PublishAtMostOnceMessageAsync(MqttPublishMessage message, CancellationToken cancellationToken)
+    {
+        await this.ProtectedOutputSendAsync(message, cancellationToken).ConfigureDefaultAwait();
+    }
+
+    private async Task PublishExactlyOnceMessageAsync(MqttPublishMessage message, CancellationToken cancellationToken)
+    {
+        using (var waitData_1_Async = this.m_waitHandlePool.GetWaitDataAsync(message))
+        {
+            await this.ProtectedOutputSendAsync(message, cancellationToken)
+                .ConfigureDefaultAwait();
+            var waitDataStatus = await waitData_1_Async.WaitAsync(cancellationToken)
+                .ConfigureDefaultAwait();
+            waitDataStatus.ThrowIfNotRunning();
+        }
+
+
+        var mqttPubRelMessage = new MqttPubRelMessage()
+        {
+            MessageId = message.MessageId
+        };
+
+        using (var waitData_2_Async = this.m_waitHandlePool.GetWaitDataAsync(mqttPubRelMessage, false))
+        {
+            await this.ProtectedOutputSendAsync(mqttPubRelMessage, cancellationToken)
+                .ConfigureDefaultAwait();
+            var waitDataStatus = await waitData_2_Async.WaitAsync(cancellationToken)
+                .ConfigureDefaultAwait();
+            waitDataStatus.ThrowIfNotRunning();
+        }
+    }
+
+    #endregion Publish
+
+    #region InputMqttMessage
+
+    /// <inheritdoc/>
+    public async Task InputMqttMessageAsync(MqttMessage mqttMessage, CancellationToken cancellationToken)
+    {
+        switch (mqttMessage)
+        {
+            case MqttConnectMessage message:
+                this.Version = message.Version;
+                await this.InputMqttConnectMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttConnAckMessage message:
+                await this.InputMqttConnAckMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttPingReqMessage message:
+                await this.InputMqttPingReqMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttPingRespMessage message:
+                await this.InputMqttPingRespMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttPublishMessage message:
+                await this.InputMqttPublishMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttPubAckMessage message:
+                await this.InputMqttPubAckMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttPubRecMessage message:
+                await this.InputMqttPubRecMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttPubRelMessage message:
+                await this.InputMqttPubRelMessageAsync(message, CancellationToken.None).ConfigureDefaultAwait();
+                break;
+
+            case MqttPubCompMessage message:
+                await this.InputMqttPubCompMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttSubscribeMessage message:
+                await this.InputMqttSubscribeMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttSubAckMessage message:
+                await this.InputMqttSubAckMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttUnsubscribeMessage message:
+                await this.InputMqttUnsubscribeMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttUnsubAckMessage message:
+                await this.InputMqttUnsubAckMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            case MqttDisconnectMessage message:
+                await this.InputMqttDisconnectMessageAsync(message, cancellationToken).ConfigureDefaultAwait();
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 处理连接确认消息
+    /// </summary>
+    /// <param name="message">连接确认消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    protected abstract Task InputMqttConnAckMessageAsync(MqttConnAckMessage message, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 处理连接消息
+    /// </summary>
+    /// <param name="message">连接消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    protected abstract Task InputMqttConnectMessageAsync(MqttConnectMessage message, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 处理PING响应消息
+    /// </summary>
+    /// <param name="message">PING响应消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    protected virtual Task InputMqttPingRespMessageAsync(MqttPingRespMessage message, CancellationToken cancellationToken)
+    {
+        this.m_waitForPing.Set(message);
+        return EasyTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 处理订阅消息
+    /// </summary>
+    /// <param name="message">订阅消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    protected abstract Task InputMqttSubscribeMessageAsync(MqttSubscribeMessage message, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 处理取消订阅消息
+    /// </summary>
+    /// <param name="message">取消订阅消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    protected abstract Task InputMqttUnsubscribeMessageAsync(MqttUnsubscribeMessage message, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 处理断开连接消息
+    /// </summary>
+    /// <param name="message">断开连接消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private Task InputMqttDisconnectMessageAsync(MqttDisconnectMessage message, CancellationToken cancellationToken)
+    {
+        return this.ProtectedMqttOnClosing(message);
+    }
+
+    /// <summary>
+    /// 处理PING请求消息
+    /// </summary>
+    /// <param name="message">PING请求消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private async Task InputMqttPingReqMessageAsync(MqttPingReqMessage message, CancellationToken cancellationToken)
+    {
+        var contentForAck = new MqttPingRespMessage();
+        await this.ProtectedOutputSendAsync(contentForAck, cancellationToken).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 处理发布确认消息
+    /// </summary>
+    /// <param name="message">发布确认消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private Task InputMqttPubAckMessageAsync(MqttPubAckMessage message, CancellationToken cancellationToken)
+    {
+        this.m_waitHandlePool.Set(message);
+        return EasyTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 处理发布完成消息
+    /// </summary>
+    /// <param name="message">发布完成消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private Task InputMqttPubCompMessageAsync(MqttPubCompMessage message, CancellationToken cancellationToken)
+    {
+        this.m_waitHandlePool.Set(message);
+        return EasyTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 处理发布消息
+    /// </summary>
+    /// <param name="message">发布消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private async Task InputMqttPublishMessageAsync(MqttPublishMessage message, CancellationToken cancellationToken)
+    {
+        //Console.WriteLine($"TopicName:{message.TopicName}");
+        //Console.WriteLine($"Payload:{Encoding.UTF8.GetString(message.Payload.ToArray())}");
+
+        if (message.QosLevel == QosLevel.AtMostOnce)
+        {
+            await this.PublishMessageArrivedAsync(CreateArrivedMessage(message)).ConfigureDefaultAwait();
+        }
+        else if (message.QosLevel == QosLevel.AtLeastOnce)
+        {
+            await this.PublishMessageArrivedAsync(CreateArrivedMessage(message)).ConfigureDefaultAwait();
+            var pubAckMessage = new MqttPubAckMessage()
+            {
+                MessageId = message.MessageId
+            };
+            await this.ProtectedOutputSendAsync(pubAckMessage, cancellationToken).ConfigureDefaultAwait();
+        }
+        else if (message.QosLevel == QosLevel.ExactlyOnce)
+        {
+            this.m_qos2MqttArrivedMessage.TryAdd(message.MessageId, new PooledArrivedMessage(message));
+            var pubRecMessage = new MqttPubRecMessage()
+            {
+                MessageId = message.MessageId
+            };
+            await this.ProtectedOutputSendAsync(pubRecMessage, cancellationToken).ConfigureDefaultAwait();
+        }
+    }
+
+    private static MqttArrivedMessage CreateArrivedMessage(MqttPublishMessage message)
+    {
+        return new MqttArrivedMessage(message.TopicName, message.QosLevel, message.Retain, message.Payload);
+    }
+
+    /// <summary>
+    /// 处理发布接收消息
+    /// </summary>
+    /// <param name="message">发布接收消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private Task InputMqttPubRecMessageAsync(MqttPubRecMessage message, CancellationToken cancellationToken)
+    {
+        this.m_waitHandlePool.Set(message);
+        return EasyTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 处理发布释放消息
+    /// </summary>
+    /// <param name="message">发布释放消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private async Task InputMqttPubRelMessageAsync(MqttPubRelMessage message, CancellationToken cancellationToken)
+    {
+        if (this.m_qos2MqttArrivedMessage.TryRemove(message.MessageId, out var pooledArrivedMessage))
+        {
+            using (pooledArrivedMessage)
+            {
+                await this.PublishMessageArrivedAsync(new MqttArrivedMessage(pooledArrivedMessage.TopicName,pooledArrivedMessage.QosLevel,pooledArrivedMessage.Retain,pooledArrivedMessage.Payload))
+               .ConfigureDefaultAwait();
+            }
+            var pubCompMessage = new MqttPubCompMessage()
+            {
+                MessageId = message.MessageId
+            };
+            await this.ProtectedOutputSendAsync(pubCompMessage, cancellationToken).ConfigureDefaultAwait();
+        }
+    }
+
+    /// <summary>
+    /// 处理订阅确认消息
+    /// </summary>
+    /// <param name="message">订阅确认消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private Task InputMqttSubAckMessageAsync(MqttSubAckMessage message, CancellationToken cancellationToken)
+    {
+        this.m_waitHandlePool.Set(message);
+        return EasyTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 处理取消订阅确认消息
+    /// </summary>
+    /// <param name="message">取消订阅确认消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>任务</returns>
+    private Task InputMqttUnsubAckMessageAsync(MqttUnsubAckMessage message, CancellationToken cancellationToken)
+    {
+        this.m_waitHandlePool.Set(message);
+        return EasyTask.CompletedTask;
+    }
+
+    #endregion InputMqttMessage
+
+    #region 委托
+
+    /// <inheritdoc/>
+    public Func<MqttActor, MqttClosingEventArgs, Task> Closing { get; set; }
+    /// <inheritdoc/>
+    public Func<MqttActor, MqttConnectedEventArgs, Task> Connected { get; set; }
+    /// <inheritdoc/>
+    public Func<MqttActor, MqttConnectingEventArgs, Task> Connecting { get; set; }
+    /// <inheritdoc/>
+    public Func<MqttActor, MqttReceivedEventArgs, Task> MessageArrived { get; set; }
+    /// <inheritdoc/>
+    public Func<MqttActor, MqttMessage, CancellationToken, Task> OutputSendAsync { get; set; }
+    /// <inheritdoc/>
+    public MqttProtocolVersion Version { get; protected set; }
+
+    #endregion 委托
+
+    #region 委托方法
+
+    /// <inheritdoc/>
+    protected async Task ProtectedMqttOnClosing(MqttDisconnectMessage message)
+    {
+        if (this.Closing != null)
+        {
+            await this.Closing.Invoke(this, new MqttClosingEventArgs(message)).ConfigureDefaultAwait();
+        }
+    }
+
+    /// <inheritdoc/>
+    protected async Task ProtectedMqttOnConnected(MqttConnectedEventArgs e)
+    {
+        if (this.Connected != null)
+        {
+            await this.Connected.Invoke(this, e).ConfigureDefaultAwait();
+        }
+    }
+
+    /// <inheritdoc/>
+    protected async Task ProtectedMqttOnConnecting(MqttConnectingEventArgs e)
+    {
+        if (this.Connecting != null)
+        {
+            await this.Connecting.Invoke(this, e).ConfigureDefaultAwait();
+        }
+    }
+
+    /// <inheritdoc/>
+    protected Task ProtectedOutputSendAsync(MqttMessage message, CancellationToken cancellationToken)
+    {
+        if (message.MessageType == MqttMessageType.Connect)
+        {
+            this.Version = message.Version;
+        }
+        else
+        {
+            message.InternalSetVersion(this.Version);
+        }
+        return this.OutputSendAsync(this, message, cancellationToken);
+    }
+
+    #endregion 委托方法
+
+    #region Class
+    readonly struct PooledArrivedMessage : IDisposable
+    {
+        public PooledArrivedMessage(MqttPublishMessage message)
+        {
+            this.TopicName = message.TopicName;
+            this.QosLevel = message.QosLevel;
+            this.Retain = message.Retain;
+
+            var payload = message.Payload;
+            if (payload.IsEmpty)
+            {
+                this.m_bytes = default;
+                return;
+            }
+
+            var length = (int)payload.Length;
+
+            var bytes = ArrayPool<byte>.Shared.Rent(length);
+            payload.CopyTo(bytes);
+            this.m_bytes = bytes;
+            this.Payload = new ReadOnlySequence<byte>(bytes, 0, length);
+        }
+        private readonly byte[] m_bytes;
+        public ReadOnlySequence<byte> Payload { get; }
+        public string TopicName { get; }
+        public QosLevel QosLevel { get; }
+        public bool Retain { get; }
+
+        public void Dispose()
+        {
+            if (this.m_bytes != null)
+            {
+                ArrayPool<byte>.Shared.Return(this.m_bytes);
+            }
+        }
+    }
+    #endregion
+}

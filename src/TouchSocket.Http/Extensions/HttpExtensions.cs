@@ -1,0 +1,739 @@
+﻿//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+namespace TouchSocket.Http;
+
+/// <summary>
+/// Http扩展辅助
+/// </summary>
+public static partial class HttpExtensions
+{
+    static HttpExtensions()
+    {
+        s_dateString = DateTime.UtcNow.ToGMTString();
+        s_timer = new Timer((state) =>
+        {
+            s_dateString = DateTime.UtcNow.ToGMTString();
+        }, null, 0, 1000);
+    }
+    #region HttpBase
+
+    /// <summary>
+    /// 表示 multipart/form-data 内容类型的常量字符串。
+    /// </summary>
+    public const string MultipartFormData = "multipart/form-data";
+
+    /// <summary>
+    /// 向请求头添加当前GMT时间的Date字段。
+    /// </summary>
+    /// <typeparam name="TRequest">请求类型，必须继承自<see cref="HttpBase"/>。</typeparam>
+    /// <param name="request">要添加Date头的请求对象。</param>
+    /// <returns>返回添加了Date头的请求对象。</returns>
+    public static TRequest AddCurrentDateHeader<TRequest>(this TRequest request) where TRequest : HttpBase
+    {
+        request.Headers.Add(HttpHeaders.Date, CurrentHttpDate);// 添加GMT时间到Header
+        return request;
+    }
+
+    /// <summary>
+    /// 添加Header参数
+    /// </summary>
+    public static TRequest AddHeader<TRequest>(this TRequest request, string key, string value) where TRequest : HttpBase
+    {
+        request.Headers.Add(key, value);
+        return request;
+    }
+    /// <summary>
+    /// 异步获取 HTTP 请求的主体内容。
+    /// </summary>
+    /// <param name="httpBase">HttpBase 实例，用于发起 HTTP 请求。</param>
+    /// <param name="encoding">编码格式</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>返回主体内容的字符串表示，如果内容为空则返回 null。</returns>
+    public static async Task<string> GetBodyAsync(this HttpBase httpBase, Encoding encoding, CancellationToken cancellationToken = default)
+    {
+        // 异步获取 HTTP 响应的内容作为字节数组
+        var bytes = await httpBase.GetContentAsync(cancellationToken).ConfigureDefaultAwait();
+        // 如果字节数组为空，则返回 null，否则使用 UTF-8 编码将字节数组转换为字符串并返回
+        return bytes.IsEmpty ? null : bytes.Span.ToString(encoding);
+    }
+
+    /// <summary>
+    /// 异步获取utf8编码的 HTTP 请求的主体内容。
+    /// </summary>
+    /// <param name="httpBase">HttpBase 实例，用于发起 HTTP 请求。</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <returns>返回主体内容的字符串表示，如果内容为空则返回 null。</returns>
+    public static Task<string> GetBodyAsync(this HttpBase httpBase, CancellationToken cancellationToken = default)
+    {
+        return GetBodyAsync(httpBase, Encoding.UTF8, cancellationToken);
+    }
+
+    /// <summary>
+    /// 当数据类型为multipart/form-data时，获取boundary
+    /// </summary>
+    public static string GetBoundary(this HttpBase httpBase)
+    {
+        // 检查ContentType是否为空，如果为空则直接返回空字符串
+
+        var contentType = httpBase.ContentType;
+
+        if (contentType.IsEmpty)
+        {
+            return string.Empty;
+        }
+        // 分割ContentType字符串，以";"为分隔符
+        var strs = contentType.First.Split(';');
+
+        if (strs.Length != 2)
+        {
+            return string.Empty;
+        }
+
+        var firstType = strs[0].Trim();
+        if (!firstType.Equals(MultipartFormData, StringComparison.OrdinalIgnoreCase))
+        {
+            // 如果不是multipart/form-data类型，则直接返回空字符串
+            return string.Empty;
+        }
+
+        // 进一步分割第二个部分，以"="为分隔符
+        strs = strs[1].Split('=');
+        // 如果分割后的长度为2，表示成功获取到boundary信息
+        if (strs.Length == 2)
+        {
+            // 移除boundary中的双引号并返回
+            return strs[1].Replace("\"", string.Empty).Trim();
+        }
+        return string.Empty;
+    }
+
+    #region 设置内容
+
+    /// <summary>
+    /// 从Json
+    /// </summary>
+    public static T FromJson<T>(this T request, string value) where T : HttpBase
+    {
+        request.SetContent(StringHttpContent.FromJson(value));
+        return request;
+    }
+
+    /// <summary>
+    /// 从文本
+    /// </summary>
+    public static T FromText<T>(this T request, string value) where T : HttpBase
+    {
+        request.SetContent(StringHttpContent.FromText(value));
+        return request;
+    }
+
+    /// <summary>
+    /// 从Xml格式
+    /// </summary>
+    public static T FromXml<T>(this T request, string value) where T : HttpBase
+    {
+        request.SetContent(StringHttpContent.FromXml(value));
+        return request;
+    }
+
+    /// <summary>
+    /// 从Xml格式
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    [Obsolete("由于方法名称不符合规范，该方法已被弃用，请使用FromXml代替")]
+    public static T FromXML<T>(this T request, string value) where T : HttpBase
+    {
+        return FromXml(request, value);
+    }
+
+    #endregion 设置内容
+
+    /// <summary>
+    /// 为HttpBase类型对象设置内容。
+    /// </summary>
+    /// <typeparam name="T">泛型参数T，表示HttpBase类型或其派生类型。</typeparam>
+    /// <param name="httpBase">需要设置内容的HttpBase类型对象。</param>
+    /// <param name="content">要设置的内容，类型为HttpContent。</param>
+    /// <returns>返回设置内容后的HttpBase对象。</returns>
+    public static T SetContent<T>(this T httpBase, HttpContent content) where T : HttpBase
+    {
+        // 将传入的内容设置到HttpBase对象中
+        httpBase.Content = content;
+        // 返回处理后的HttpBase对象
+        return httpBase;
+    }
+
+    /// <summary>
+    /// 设置内容
+    /// </summary>
+    /// <param name="httpBase">HttpBase类型的对象，其内容需要被设置</param>
+    /// <param name="content">要设置的内容，以字符串形式传入</param>
+    /// <param name="encoding">内容的编码方式，如果未指定，则默认使用UTF-8编码</param>
+    /// <returns>返回设置后的内容对象，允许进行方法链调用</returns>
+    public static T SetContent<T>(this T httpBase, string content, Encoding encoding = null) where T : HttpBase
+    {
+        // 将内容转换为字节数组，并调用SetContent方法进行设置
+        httpBase.SetContent((encoding ?? Encoding.UTF8).GetBytes(content));
+        // 返回处理后的HttpBase对象
+        return httpBase;
+    }
+
+    /// <summary>
+    /// 设置数据体长度
+    /// </summary>
+    /// <param name="httpBase">要设置数据体长度的HttpBase对象</param>
+    /// <param name="value">数据体的长度</param>
+    /// <returns>返回修改后的HttpBase对象</returns>
+    public static T SetContentLength<T>(this T httpBase, long value) where T : HttpBase
+    {
+        httpBase.ContentLength = value;
+        return httpBase;
+    }
+
+    /// <summary>
+    /// 从扩展名设置内容类型，必须以“.”开头
+    /// </summary>
+    /// <param name="httpBase">要设置内容类型的 HttpBase 对象</param>
+    /// <param name="extension">文件扩展名，必须以“.”开头，用于确定内容类型</param>
+    /// <returns>返回设置后的 HttpBase 对象</returns>
+    public static T SetContentTypeByExtension<T>(this T httpBase, string extension) where T : HttpBase
+    {
+        // 根据扩展名获取对应的内容类型
+        var type = HttpTools.GetContentTypeFromExtension(extension);
+        // 设置 HttpBase 对象的内容类型
+        httpBase.ContentType = type;
+        // 返回设置后的 HttpBase 对象
+        return httpBase;
+    }
+
+    #endregion HttpBase
+
+    #region HttpRequest
+
+    /// <summary>
+    /// 添加Query参数
+    /// </summary>
+    /// <param name="request">请求对象</param>
+    /// <param name="key">参数键</param>
+    /// <param name="value">参数值</param>
+    /// <returns>返回添加了参数的请求对象</returns>
+    public static TRequest AddQuery<TRequest>(this TRequest request, string key, string value) where TRequest : HttpRequest
+    {
+        // 为请求对象的Query集合添加新的键值对参数
+        request.Query.Add(key, value);
+        // 返回修改后的请求对象
+        return request;
+    }
+
+    /// <summary>
+    /// 异步获取HttpRequest的表单集合
+    /// </summary>
+    /// <param name="request">HttpRequest对象，用于提取表单数据</param>
+    /// <typeparam name="TRequest">泛型参数，限定为HttpRequest类型</typeparam>
+    /// <returns>返回一个任务，该任务的结果是IFormCollection类型的表单集合</returns>
+    public static async Task<IFormCollection> GetFormCollectionAsync<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        // 检查请求中是否包含分隔符，这是判断是否存在多文件数据的依据。
+        // 如果分隔符为空或未指定，则认为请求中没有多文件数据。
+
+        var boundaryString = request.GetBoundary();
+
+        if (boundaryString.IsNullOrEmpty())
+        {
+            var contentType = request.ContentType;
+            if (CheckFormBody(contentType, out var encoding))
+            {
+                return new InternalFormCollection(
+                    await request.GetContentAsync().ConfigureDefaultAwait(), encoding);
+            }
+
+            return new InternalFormCollection();
+        }
+        else
+        {
+            boundaryString = $"--{boundaryString}";
+
+            var valueByteBlock = new ValueByteBlock(Encoding.UTF8.GetMaxByteCount(boundaryString.Length));
+
+            try
+            {
+                WriterExtension.WriteNormalString(ref valueByteBlock, boundaryString, Encoding.UTF8);
+                return new InternalFormCollection(await request.GetContentAsync().ConfigureDefaultAwait(), valueByteBlock.Span);
+            }
+            finally
+            {
+                valueByteBlock.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 获取多文件集合。如果不存在，则返回null。
+    /// </summary>
+    /// <typeparam name="TRequest">请求类型，必须继承自HttpRequest。</typeparam>
+    /// <param name="request">请求对象，用于提取多文件集合。</param>
+    /// <returns>多文件集合对象，如果请求中不存在多文件数据，则返回null。</returns>
+    [Obsolete("此方法已被弃用，请使用GetFormCollectionAsync代替，然后使用获取Files属性", true)]
+    public static IMultifileCollection GetMultifileCollection<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        throw new NotImplementedException();
+    }
+
+    /// <summary>
+    /// 初始化常规的请求头。
+    /// <para>包含：</para>
+    /// <list type="number">
+    /// <item>Connection:keep-alive</item>
+    /// <item>Pragma:no-cache</item>
+    /// <item>UserAgent:TouchSocket.Http</item>
+    /// </list>
+    /// </summary>
+    /// <param name="request">要初始化请求头的请求对象。</param>
+    /// <returns>返回初始化后的请求对象。</returns>
+    public static TRequest InitHeaders<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        // 添加保持连接的头，以支持持久连接
+        request.Headers.TryAdd(HttpHeaders.Connection, "keep-alive");
+        // 添加禁止缓存的头，确保请求最新
+        request.Headers.TryAdd(HttpHeaders.Pragma, "no-cache");
+        // 设置用户代理头，标识使用的Http库
+        request.Headers.TryAdd(HttpHeaders.UserAgent, "TouchSocket.Http");
+        return request;
+    }
+
+    /// <summary>
+    /// 将一个键值对集合按照application/x-www-form-urlencoded格式设置到HttpRequest的内容中
+    /// </summary>
+    /// <param name="request">待设置内容的HttpRequest对象</param>
+    /// <param name="nameValueCollection">包含键值对的集合，将被转换为查询字符串格式</param>
+    /// <typeparam name="TRequest">HttpRequest的类型，使用泛型以支持所有HttpRequest的子类</typeparam>
+    public static void SetFormUrlEncodedContent<TRequest>(this TRequest request, IEnumerable<KeyValuePair<string, string>> nameValueCollection)
+        where TRequest : HttpRequest
+    {
+        var encodedPairs = nameValueCollection.Select(p =>
+            $"{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value ?? "")}"
+                .Replace("%20", "+"));  // 手动处理空格为+
+
+        request.SetContent(string.Join("&", encodedPairs));
+
+        // 设置请求的内容类型为application/x-www-form-urlencoded
+        request.ContentType = "application/x-www-form-urlencoded";
+    }
+
+    /// <summary>
+    /// 添加Host请求头
+    /// </summary>
+    /// <param name="request">要添加Host请求头的HttpRequest对象</param>
+    /// <param name="host">要设置的Host值</param>
+    /// <returns>返回修改后的HttpRequest对象</returns>
+    public static TRequest SetHost<TRequest>(this TRequest request, string host) where TRequest : HttpRequest
+    {
+        request.Headers.TryAdd(HttpHeaders.Host, host);
+        return request;
+    }
+
+    /// <summary>
+    /// 设置Url，可带参数
+    /// </summary>
+    /// <param name="request">请求对象。</param>
+    /// <param name="url">要设置的URL地址</param>
+    /// <returns>返回当前HttpRequest实例，支持链式调用</returns>
+    public static TRequest SetUrl<TRequest>(this TRequest request, string url)
+        where TRequest : HttpRequest
+    {
+        request.URL = url;
+        return request;
+    }
+    /// <summary>
+    /// 对比不包含参数的Url。其中有任意一方为<see langword="null"/>，则均返回False。
+    /// </summary>
+    /// <param name="request">请求对象，用于获取待对比的相对URL。</param>
+    /// <param name="url">待对比的目标URL字符串。</param>
+    /// <returns>如果两个URL都不为<see langword="null"/>且在忽略大小写的情况下相等，则返回<see langword="true"/>；否则返回<see langword="false"/>。</returns>
+    public static bool UrlEquals<TRequest>(this TRequest request, string url) where TRequest : HttpRequest
+    {
+        // 检查两个URL是否都不为<see langword="null"/>，并且在文化无关的大小写不敏感的情况下是否相等
+        return !string.IsNullOrEmpty(request.RelativeURL) && !string.IsNullOrEmpty(url) && request.RelativeURL.Equals(url, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool CheckFormBody(string contentType, out Encoding encoding)
+    {
+        // 初始化编码为默认的 UTF-8
+        encoding = Encoding.UTF8;
+
+        // 若 contentType 为空，直接返回 false
+        if (string.IsNullOrEmpty(contentType))
+        {
+            return false;
+        }
+
+        // 检查 contentType 是否以 "application/x-www-form-urlencoded" 开头
+        if (!contentType.StartsWith("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // 查找 charset 参数的起始位置
+        var charsetIndex = contentType.IndexOf("charset=", StringComparison.OrdinalIgnoreCase);
+        if (charsetIndex < 0)
+        {
+            return true;
+        }
+
+        // 定位到 charset 参数值的起始位置
+        charsetIndex += "charset=".Length;
+        // 查找 charset 参数值的结束位置
+        var endIndex = contentType.IndexOf(';', charsetIndex);
+        if (endIndex < 0)
+        {
+            // 如果没有后续的分号，说明到字符串末尾都是 charset 值
+            endIndex = contentType.Length;
+        }
+        // 提取 charset 参数的值
+        var charsetValue = contentType.Substring(charsetIndex, endIndex - charsetIndex).Trim();
+
+        try
+        {
+            // 根据提取的 charset 值获取对应的编码
+            encoding = Encoding.GetEncoding(charsetValue);
+        }
+        catch (ArgumentException)
+        {
+            // 如果提取的 charset 值无效，使用默认的 UTF-8 编码
+            encoding = Encoding.UTF8;
+        }
+
+        return true;
+    }
+
+    #region 设置函数
+
+    /// <summary>
+    /// 将请求对象的方法设置为Delete。
+    /// </summary>
+    /// <param name="request">要设置为Delete方法的请求对象。</param>
+    /// <returns>返回修改过方法类型的请求对象。</returns>
+    public static TRequest AsDelete<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        request.Method = HttpMethod.Delete;
+        return request;
+    }
+
+    /// <summary>
+    /// 将请求方法设置为Get
+    /// </summary>
+    /// <param name="request">要转换为Get方法的请求对象</param>
+    /// <returns>修改过方法的请求对象</returns>
+    public static TRequest AsGet<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        request.Method = HttpMethod.Get;
+        return request;
+    }
+
+    /// <summary>
+    /// 将指定的请求对象设置为指定的HTTP方法。
+    /// 该方法扩展了HttpRequest类，允许在调用时动态改变请求的方法类型。
+    /// </summary>
+    /// <param name="request">要修改的HttpRequest对象。</param>
+    /// <param name="method">要设置的HTTP方法，如"Get"、"Post"等。</param>
+    /// <returns>修改后的HttpRequest对象。</returns>
+    public static TRequest AsMethod<TRequest>(this TRequest request, string method) where TRequest : HttpRequest
+    {
+        // 设置请求对象的方法类型为传入的HTTP方法。
+        request.Method = new HttpMethod(method);
+        // 返回修改后的请求对象。
+        return request;
+    }
+
+    /// <summary>
+    /// 将请求对象设置为Post方法
+    /// </summary>
+    /// <param name="request">要设置为Post方法的请求对象</param>
+    /// <returns>修改过方法类型的请求对象</returns>
+    public static TRequest AsPost<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        request.Method = HttpMethod.Post;
+        return request;
+    }
+
+    /// <summary>
+    /// 将请求对象的方法设置为PUT
+    /// </summary>
+    /// <param name="request">要修改的请求对象</param>
+    /// <returns>修改后的请求对象</returns>
+    public static TRequest AsPut<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        request.Method = HttpMethod.Put;
+        return request;
+    }
+
+    #endregion 设置函数
+
+    #region 判断函数
+
+    /// <summary>
+    /// 判断当前请求是否为Delete操作
+    /// </summary>
+    /// <param name="request">请求对象，用于检查请求方法</param>
+    /// <returns>如果请求方法为Delete，则返回<see langword="true"/>；否则返回<see langword="false"/></returns>
+    public static bool IsDelete<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        return request.Method == HttpMethod.Delete;
+    }
+
+    /// <summary>
+    /// 判断当前请求是否为Get请求
+    /// </summary>
+    /// <param name="request">请求对象，用于检查其请求方法</param>
+    /// <returns>如果请求方法是Get，则返回<see langword="true"/>；否则返回<see langword="false"/></returns>
+    public static bool IsGet<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        return request.Method == HttpMethod.Get;
+    }
+
+    /// <summary>
+    /// 判断指定的请求是否为指定的HTTP方法类型
+    /// </summary>
+    /// <param name="request">待检查的HTTP请求</param>
+    /// <param name="method">要判断的HTTP方法类型，如"Get"、"Post"</param>
+    /// <returns>如果请求的方法类型与指定的方法一致，则返回<see langword="true"/>；否则返回<see langword="false"/></returns>
+    public static bool IsMethod<TRequest>(this TRequest request, string method) where TRequest : HttpRequest
+    {
+        return request.Method == new HttpMethod(method);
+    }
+
+    /// <summary>
+    /// 判断当前请求是否为Post请求
+    /// </summary>
+    /// <param name="request">请求对象，泛型参数，必须是HttpRequest的子类或实现</param>
+    /// <returns>如果当前请求方法是Post，则返回<see langword="true"/>；否则返回<see langword="false"/></returns>
+    public static bool IsPost<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        // 直接比较请求对象的Method属性是否为HttpMethod.Post，以判断是否为Post请求
+        return request.Method == HttpMethod.Post;
+    }
+
+    /// <summary>
+    /// 判断请求是否为PUT方法
+    /// </summary>
+    /// <param name="request">请求对象，类型为HttpRequest的泛型实例</param>
+    /// <returns>如果请求方法为PUT，则返回<see langword="true"/>；否则返回<see langword="false"/></returns>
+    public static bool IsPut<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        return request.Method == HttpMethod.Put;
+    }
+
+    #endregion 判断函数
+
+    #region 判断属性
+
+    /// <summary>
+    /// 判断请求是否接受Gzip压缩。
+    /// </summary>
+    /// <param name="request">请求对象，用于获取请求的接受编码。</param>
+    /// <returns>如果请求接受Gzip压缩，则返回<see langword="true"/>；否则返回<see langword="false"/>。</returns>
+    public static bool IsAcceptGzip<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        // 获取请求头中的接受编码信息
+        var acceptEncoding = request.AcceptEncoding;
+
+        // 检查接受编码是否包含Gzip
+        return !acceptEncoding.IsEmpty && acceptEncoding.Contains("gzip");
+    }
+
+    /// <summary>
+    /// 判断请求头中是否包含升级连接
+    /// </summary>
+    /// <param name="request">请求对象，泛型参数，要求是HttpRequest的子类或实现</param>
+    /// <returns>如果请求头中包含升级连接，则返回<see langword="true"/>；否则返回<see langword="false"/></returns>
+    public static bool IsUpgrade<TRequest>(this TRequest request) where TRequest : HttpRequest
+    {
+        // 比较请求头中的连接类型是否为升级类型，忽略大小写
+        return string.Equals(request.Headers.Get(HttpHeaders.Connection), HttpHeaders.Upgrade, StringComparison.OrdinalIgnoreCase);
+    }
+
+    #endregion 判断属性
+
+    #endregion HttpRequest
+
+    #region HttpResponse
+
+    #region DateString
+
+    private static readonly Timer s_timer;
+
+    private static volatile string s_dateString;
+
+    /// <summary>
+    /// 获取当前的GMT格式日期字符串，通常用于HTTP响应头中的Date字段。
+    /// </summary>
+    public static string CurrentHttpDate => s_dateString;
+    #endregion
+
+    /// <summary>
+    /// 表示 HTTP 头部的服务器信息。
+    /// </summary>
+    public static readonly string HttpHeadersServer = $"TouchSocket.Http";
+
+    /// <summary>
+    /// 设置HTML内容。
+    /// </summary>
+    /// <typeparam name="TResponse">响应类型，必须继承自HttpResponse。</typeparam>
+    /// <param name="response">响应对象，用于设置HTML内容。</param>
+    /// <param name="htmlString">HTML字符串，表示要设置的内容。</param>
+    /// <returns>返回设置了HTML内容的响应对象。</returns>
+    public static TResponse FromHtml<TResponse>(this TResponse response, string htmlString) where TResponse : HttpResponse
+    {
+        response.SetContent(StringHttpContent.FromHtml(htmlString));
+        return response;
+    }
+
+    /// <summary>
+    /// 判断返回的状态码是否为成功。
+    /// </summary>
+    /// <param name="response">要判断的响应对象。</param>
+    /// <param name="status">
+    /// 可选参数，指定期望的状态码。
+    /// 当不指定具体的状态码时，只要状态码在200-299之间则为<see langword="true"/>。
+    /// 当指定时，状态码不仅必须要在200-299之间，还必须是指定的状态码才会返回<see langword="true"/>。
+    /// </param>
+    /// <returns>返回一个布尔值，表示响应状态码是否表示成功。</returns>
+    public static bool IsSuccess<TResponse>(this TResponse response, int? status = default) where TResponse : HttpResponse
+    {
+        // 判断是否指定了特定的状态码
+        if (status.HasValue)
+        {
+            // 检查状态码是否与指定的状态码相匹配，并且是否在200-299之间
+            return response.StatusCode == status && response.StatusCode >= 200 && response.StatusCode < 300;
+        }
+        else
+        {
+            // 检查状态码是否在200-299之间
+            return response.StatusCode >= 200 && response.StatusCode < 300;
+        }
+    }
+
+    /// <summary>
+    /// 设置文件类型。
+    /// </summary>
+    /// <param name="response">要设置的HTTP响应对象。</param>
+    /// <param name="fileName">文件名，用于确定Content-Type和文件下载时的提示名称。</param>
+    /// <returns>返回设置后的HTTP响应对象。</returns>
+    public static TResponse SetContentTypeFromFileName<TResponse>(this TResponse response, string fileName) where TResponse : HttpResponse
+    {
+        // 根据文件名设置Content-Disposition头部，以指定文件下载时的处理方式和文件名
+        var contentDisposition = "attachment;" + "filename=" + System.Web.HttpUtility.UrlEncode(fileName);
+        response.Headers.TryAdd(HttpHeaders.ContentDisposition, contentDisposition);
+        return response;
+    }
+
+    /// <summary>
+    /// 为指定的HttpResponse对象设置Gzip压缩内容
+    /// </summary>
+    /// <typeparam name="TResponse">HttpResponse的类型</typeparam>
+    /// <param name="response">要设置内容的HttpResponse对象</param>
+    /// <param name="gzipContent">要设置的Gzip压缩内容</param>
+    /// <returns>返回设置了Gzip内容的HttpResponse对象</returns>
+    public static TResponse SetGzipContent<TResponse>(this TResponse response, byte[] gzipContent) where TResponse : HttpResponse
+    {
+        // 设置HttpResponse的内容为Gzip压缩内容
+        response.SetContent(gzipContent);
+        // 在HttpResponse的头信息中添加ContentEncoding为gzip，标识内容已经被gzip压缩
+        response.Headers.TryAdd(HttpHeaders.ContentEncoding, "gzip");
+        return response;
+    }
+
+    ///<summary>
+    /// 设置重定向响应。
+    /// <para>
+    /// 默认状态码为302，状态信息为"Found"。如果需要自定义状态码和状态信息，请使用<see cref="SetStatus{TResponse}(TResponse, int, string)"/>方法。
+    /// </para>
+    /// </summary>
+    /// <typeparam name="TResponse">响应类型，必须继承自HttpResponse。</typeparam>
+    /// <param name="response">响应对象，用于设置重定向。</param>
+    /// <param name="url">重定向的目标URL。</param>
+    /// <returns>返回设置了重定向的响应对象。</returns>
+    public static TResponse SetRedirect<TResponse>(this TResponse response, string url) where TResponse : HttpResponse
+    {
+        response.Headers.TryAdd(HttpHeaders.Location, url);
+        response.SetStatus(302, "Found");
+        return response;
+    }
+
+    /// <summary>
+    /// 设置状态，并且附带时间戳。
+    /// </summary>
+    /// <param name="response">要设置状态的HttpResponse对象。</param>
+    /// <param name="status">HTTP响应状态码。</param>
+    /// <param name="msg">状态描述信息。</param>
+    /// <returns>返回修改后的HttpResponse对象。</returns>
+    public static TResponse SetStatus<TResponse>(this TResponse response, int status, string msg) where TResponse : HttpResponse
+    {
+        response.StatusCode = status; // 设置HTTP状态码
+        response.StatusMessage = msg; // 设置状态描述信息
+        response.Headers.TryAdd(HttpHeaders.Server, HttpHeadersServer); // 添加服务器版本信息到Header
+        response.Headers.TryAdd(HttpHeaders.Date, CurrentHttpDate);
+        return response;
+    }
+
+    /// <summary>
+    /// 设置默认Success状态，并且附带时间戳。
+    /// </summary>
+    /// <typeparam name="TResponse">泛型参数，表示HttpResponse的类型。</typeparam>
+    /// <param name="response">要设置状态的HttpResponse对象。</param>
+    /// <returns>返回设置后的HttpResponse对象。</returns>
+    public static TResponse SetStatusWithSuccess<TResponse>(this TResponse response) where TResponse : HttpResponse
+    {
+        return SetStatus(response, 200, "Success");
+    }
+
+    /// <summary>
+    /// 设置HTTP响应为404 Not Found
+    /// 此方法用于处理路径文件未找到的情况，它将HTTP响应的状态码设置为404，并在响应体中返回一个简单的HTML页面，指示文件未找到。
+    /// </summary>
+    /// <param name="response">要设置的HTTP响应对象</param>
+    /// <returns>设置后的HTTP响应对象</returns>
+    public static TResponse UrlNotFind<TResponse>(this TResponse response) where TResponse : HttpResponse
+    {
+        response.FromHtml("<html><body><h1>404 -Not Found</h1></body></html>");
+        response.SetStatus(404, "Not Found");
+        return response;
+    }
+
+    /// <summary>
+    /// 将字符串消息以UTF-8编码写入HTTP响应的内容中。
+    /// </summary>
+    /// <param name="response">要写入消息的HTTP响应对象</param>
+    /// <param name="message">要写入响应的字符串消息</param>
+    /// <param name="cancellationToken">可取消令箭</param>
+    /// <typeparam name="TResponse">响应类型，必须继承自HttpResponse</typeparam>
+    public static async ValueTask WriteAsync<TResponse>(this TResponse response, string message, CancellationToken cancellationToken = default) where TResponse : HttpResponse
+    {
+        //PR:https://github.com/RRQM/TouchSocket/pull/121
+        //此处使用分段写入的方式，避免一次性将整个字符串转换为字节数组，减少内存占用和GC压力。
+        var writer = new SegmentedBytesWriter();
+        try
+        {
+            WriterExtension.WriteNormalString(ref writer, message, Encoding.UTF8);
+            foreach (var memory in writer.Sequence)
+            {
+                await response.WriteAsync(memory, cancellationToken);
+            }
+        }
+        finally
+        {
+            writer.Dispose();
+        }
+    }
+    #endregion HttpResponse
+}

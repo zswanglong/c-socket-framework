@@ -1,0 +1,133 @@
+---
+id: mqttservice
+title: Mqtt服务器
+---
+
+import Tag from "@site/src/components/Tag.js";
+import { TouchSocketMqttDefinition } from "@site/src/components/Definition.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+import CardLink from "@site/src/components/CardLink.js";
+
+
+<TouchSocketMqttDefinition />
+
+
+## 一、说明
+
+`MqttTcpService` 是基于 Mqtt 协议的消息服务端，支持客户端接入管理、订阅关系维护、消息路由转发、遗嘱消息处理等功能，兼容 Mqtt 3.1.1 及 5.0+ 协议版本。
+
+## 二、特点
+
+- 多协议版本支持（v3.1.1/v5.0）
+- 高性能异步架构设计
+- 主题树形管理机制
+- 精确的 QoS 保障
+- 遗嘱消息转发
+- 插件化扩展体系
+- TLS 加密通信
+- 客户端黑白名单控制
+
+## 三、应用场景
+
+- 工业物联网平台
+- 实时数据监控中心
+- 智慧城市中枢系统
+- 私有化消息总线
+- 设备远程管理服务
+
+## 四、可配置项
+
+继承所有 [TcpService](./tcpservice.mdx) 的配置。除此之外还支持 Mqtt 服务端专有配置。
+
+<details>
+<summary>可配置项</summary>
+<div>
+
+</div>
+</details>
+
+## 五、支持插件
+
+|  插件方法| 功能 |
+| --- | --- |
+| IMqttConnectingPlugin | 当Mqtt客户端正在连接之前调用此方法。 |
+| IMqttConnectedPlugin | 当Mqtt客户端连接成功时调用。 |
+| IMqttClosingPlugin | 当Mqtt客户端正在关闭时调用。|
+| IMqttClosedPlugin | 当Mqtt客户端断开连接后触发。 |
+| IMqttReceivingPlugin | 在收到Mqtt所有消息时触发，可以通过`e.MqttMessage`获取到`Mqtt`的所有消息，包括订阅、订阅确认、发布、发布确认等。 |
+| IMqttReceivedPlugin | 当接收到Mqtt发布消息，且成功接收时触发。可以通过`e.MqttMessage`获取到`Mqtt`的发布消息。 |
+
+## 六、创建Mqtt服务端
+
+### 6.1 简单创建
+
+直接创建MqttTcpService，然后配置基本的监听地址和插件：
+
+<CustomCodeBlock region="创建Tcp协议的Mqtt服务器" />
+
+## 七、接收消息
+
+在Mqtt服务端创建好之后，Mqtt组件的消息都是通过插件抛出的。你可以订阅`IMqttReceivingPlugin`插件和`IMqttReceivedPlugin`插件来接收消息。
+
+正如插件说明所示，`IMqttReceivingPlugin`插件可以在收到所有消息时触发，`IMqttReceivedPlugin`插件可以在收到发布消息时触发。
+
+所以如果你只关心发布成功的消息，那么可以只订阅`IMqttReceivedPlugin`插件即可。
+
+但是对于服务器来说，也可能需要获取到的消息可能是订阅、发布、取消订阅等。所以你可以通过`IMqttReceivingPlugin`的`e.MqttMessage`来获取到具体的消息类型。
+
+下列将简单演示。
+
+### 7.1 通过插件接收所有消息
+
+<CustomCodeBlock region="Mqtt服务器通过插件接收所有消息" />
+
+### 7.2 接收发布消息
+
+如果你只关心发布成功的消息，那么可以只订阅`IMqttReceivedPlugin`插件即可：
+
+<CustomCodeBlock region="Mqtt服务器接收发布消息" />
+
+## 八、发布消息
+
+暂未实现
+{/* Mqtt服务器可以主动向连接的客户端发布消息。
+
+### 8.1 向所有客户端发布消息
+
+<CustomCodeBlock region="Mqtt服务器向所有客户端发布消息" />
+
+### 8.2 向指定客户端发布消息
+
+<CustomCodeBlock region="Mqtt服务器向指定客户端发布消息" /> */}
+
+## 九、客户端管理
+
+### 9.1 获取所有连接的客户端
+
+<CustomCodeBlock region="Mqtt服务器获取所有连接的客户端" />
+
+### 9.2 断开指定客户端
+
+<CustomCodeBlock region="Mqtt服务器断开指定客户端" />
+
+## 十、订阅管理
+
+暂未实现
+
+{/* ### 10.1 获取客户端订阅信息
+
+<CustomCodeBlock region="Mqtt服务器获取客户端订阅信息" /> */}
+
+## 十一、服务器管理
+
+### 11.1 停止服务器
+
+<CustomCodeBlock region="Mqtt服务器停止服务器" />
+
+### 11.2 释放资源
+
+<CustomCodeBlock region="Mqtt服务器释放资源" />
+
+## 十二、示例Demo
+
+<CardLink link="examples/Mqtt"/>

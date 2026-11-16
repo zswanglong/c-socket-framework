@@ -1,0 +1,177 @@
+---
+id: namedpipeclient
+title: 创建NamedPipeClient
+---
+
+import Tag from "@site/src/components/Tag.js";
+import BilibiliCard from '@site/src/components/BilibiliCard.js';
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import { TouchSocketNamedPipeDefinition } from "@site/src/components/Definition.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+import CardLink from "@site/src/components/CardLink.js";
+
+<TouchSocketNamedPipeDefinition />
+
+
+## 一、说明
+
+`NamedPipeClient`是命名管道系客户端基类，他直接参与命名管道的连接、发送、接收、处理、断开等，他的业务与服务器的`NamedPipeSessionClient`是一一对应的。
+
+## 二、特点
+
+- 简单易用。
+- 单线程处理。
+- 内存池支持
+- 高性能
+- 适配器预处理，一键式解决**分包**、**粘包**、对象解析(即适用于Tcp的一切适配器)等。
+- 超简单的同步发送、异步发送、接收等操作。
+- 基于委托、插件驱动，让每一步都能执行AOP。
+
+## 三、产品应用场景
+
+- 所有本机IPC(进程通讯)基础使用场景：可跨平台、跨语言使用。
+- 高性能本地应用程序间通信场景。
+- 需要可靠数据传输的本机服务通信。
+
+## 四、可配置项
+
+### 4.1 管道名称设置
+
+`NamedPipeClient`必须指定管道名称，否则无法连接。
+
+管道名称支持以下格式：
+
+1. 简单名称：直接传入管道名称，如`"TouchSocketPipe"`
+
+<CustomCodeBlock region="客户端设置命名管道名称"/>
+
+:::tip 提示
+
+建议在配置时，使用规范的管道名称体制，避免使用特殊字符和过长的名称。
+
+:::  
+
+## 五、支持插件
+
+|  插件方法| 功能 |
+| --- | --- |
+| INamedPipeConnectingPlugin | 此时管道实际上已经完成连接，但是并没有启动接收，然后触发。 |
+| INamedPipeConnectedPlugin | 同意连接，且成功启动接收后触发 |
+| INamedPipeClosingPlugin | 当客户端主动调用Close时触发 |
+| INamedPipeClosedPlugin | 当客户端断开连接后触发 |
+| INamedPipeReceivingPlugin | 在收到原始数据时触发，所有的数据均在ByteBlock里面。 |
+| INamedPipeReceivedPlugin | 在收到适配器数据时触发，根据适配器类型，数据可能在ByteBlock或者IRequestInfo里面。 |
+| INamedPipeSendingPlugin | 当即将发送数据时，调用该方法在适配器之后，接下来即会发送数据。 |
+
+## 六、创建NamedPipeClient
+
+#### 6.1 简单创建
+
+简单的处理逻辑可通过**Connecting**、**Connected**、**Received**等委托直接实现。
+
+代码如下：
+
+<CustomCodeBlock region="创建NamedPipe客户端"/>
+
+#### 6.2 继承实现
+
+一般继承实现的话，可以从`NamedPipeClient`继承。如果有特殊需求，也可以从`NamedPipeClientBase`继承。
+
+<CustomCodeBlock region="从继承创建NamedPipe客户端"/>
+
+## 七、接收数据
+
+在`NamedPipeClient`中，接收数据的方式有很多种。多种方式可以组合使用。
+
+### 7.1 Received委托处理
+
+当使用`NamedPipeClient`创建客户端时，内部已经定义好了一个外置委托`Received`，可以通过该委托直接接收数据。
+
+<CustomCodeBlock region="NamedPipe客户端使用Received异步委托接收数据"/>
+
+### 7.2 继承NamedPipeClient重写接收逻辑
+
+如6.2所示，如果需要更自定义的接收逻辑，可以从`NamedPipeClient`继承，然后重写`OnNamedPipeReceived`方法。
+
+### 7.3 插件处理 <Tag>推荐</Tag>
+
+按照TouchSocket的设计理念，使用插件处理数据，是一项非常简单，且高度解耦的方式。步骤如下：
+
+（1）声明插件
+
+插件可以先继承`PluginBase`，然后再实现需要的功能插件接口，可以按需选择泛型或者非泛型实现。
+
+如果已经有继承类，直接实现`IPlugin`接口即可。
+
+<CustomCodeBlock region="NamedPipe客户端使用插件接收"/>
+
+（2）创建使用插件处理的客户端
+
+<CustomCodeBlock region="NamedPipe客户端配置插件"/>
+
+### 7.4 异步阻塞接收
+
+异步阻塞接收，即使用await的方式接收数据。其特点是能在代码上下文中，直接获取到收到的数据。例如：
+
+<CustomCodeBlock region="NamedPipe客户端异步阻塞接收"/>
+
+:::tip 提示
+
+异步阻塞接收，在等待接收数据时，不会阻塞线程资源，所以即使大量使用，也不会影响性能。
+
+:::  
+
+## 八、发送数据
+
+`NamedPipeClient`已经内置了发送方法，直接调用就可以发送，如果发送失败，则会立即抛出异常。
+
+<CustomCodeBlock region="NamedPipe客户端发送数据"/>
+
+:::tip 提示
+
+框架不仅内置了字节的发送，也扩展了字符串等常见数据的发送。而且还包括了`TrySend`等不会抛出异常的发送方法。
+
+::: 
+
+:::caution 注意
+
+所有的发送，框架内部实际上**只实现了异步发送**，但是为了兼容性，仍然保留了同步发送的扩展。但是强烈建议如有可能，请**务必使用异步发送来提高效率**。
+
+:::  
+
+
+## 九、断线重连
+
+断线重连，即命名管道客户端在断开服务器后，主动发起的再次连接请求。
+
+### 9.1 启用断线重连
+
+断线重连，依靠的是命名管道断开后，或者初始化后，Online属性为false时，会尝试连接。
+
+所以，重连机制在Setup完成后，即会生效。
+
+<CustomCodeBlock region="NamedPipe客户端启用断线重连"/>
+
+### 9.2 暂停和恢复重连
+
+<CustomCodeBlock region="NamedPipe重连插件暂停重连"/>
+
+:::caution 注意
+
+**断线重连，必须满足以下几个要求：**
+
+1. 必须有显式的断开信息，也就是说，如果管道服务器异常关闭，可能不会立即检测到。
+2. 重连机制依赖于轮询检查，检查间隔不宜过短，以免消耗过多系统资源。
+
+:::  
+
+:::tip 提示
+
+`UseNamedPipeReconnection`插件，可以通过设置`SetActionForCheck`，自己规定检查活性的方法。默认情况下，只会检验`Online`属性，如果需要更准确的连接状态检查，建议发送心跳包来验证连接活性。
+
+:::  
+
+## 十、示例Demo
+
+<CardLink link="examples/NamedPipe" isPro="true"/>

@@ -1,0 +1,14 @@
+<Project>
+
+	<PropertyGroup>
+		<BaseVersion>5.0.0-beta.11</BaseVersion>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)'=='Release'">
+		<TouchSocketVersion>$(BaseVersion)</TouchSocketVersion>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)'=='Debug'">
+		<TouchSocketVersion>$(BaseVersion)</TouchSocketVersion>
+	</PropertyGroup>
+
+</Project>

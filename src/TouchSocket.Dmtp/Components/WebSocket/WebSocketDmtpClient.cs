@@ -1,0 +1,334 @@
+//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.Buffers;
+using System.Net.WebSockets;
+using TouchSocket.Http.WebSockets;
+using TouchSocket.Sockets;
+
+namespace TouchSocket.Dmtp;
+
+/// <summary>
+/// WebSocketDmtpClient 类，继承自 SetupConfigObject 并实现了 IWebSocketDmtpClient 接口。
+/// 该类负责 WebSocket 客户端的配置和管理，提供与 Dmtp 协议相关的功能。
+/// </summary>
+public class WebSocketDmtpClient : SetupClientWebSocket, IWebSocketDmtpClient
+{
+    /// <summary>
+    /// 初始化WebSocketDmtpClient类的新实例。
+    /// </summary>
+    public WebSocketDmtpClient()
+    {
+        this.Protocol = DmtpUtility.DmtpProtocol;
+    }
+
+    #region 字段
+
+    private readonly SemaphoreSlim m_connectionSemaphore = new SemaphoreSlim(1, 1);
+    private bool m_allowRoute;
+    private SealedDmtpActor m_dmtpActor;
+    private DmtpAdapter m_dmtpAdapter;
+    private Func<string, Task<IDmtpActor>> m_findDmtpActor;
+    private CancellationTokenSource m_tokenSourceForReceive;
+
+    #endregion 字段
+
+    #region 连接
+
+    /// <inheritdoc/>
+    public virtual async Task ConnectAsync(CancellationToken cancellationToken)
+    {
+        await this.m_connectionSemaphore.WaitAsync(cancellationToken).ConfigureDefaultAwait();
+        try
+        {
+            if (this.Online)
+            {
+                return;
+            }
+
+            if (!base.Online)
+            {
+                await base.WebSocketConnectAsync(cancellationToken).ConfigureDefaultAwait();
+            }
+
+            this.m_dmtpActor = new SealedDmtpActor(this.m_allowRoute)
+            {
+                OutputSendAsync = this.OnDmtpActorSendAsync,
+                Routing = this.OnDmtpActorRouting,
+                Connecting = this.OnDmtpActorConnecting,
+                Connected = this.OnDmtpActorConnected,
+                Closing = this.OnDmtpActorClose,
+                Closed = this.OnDmtpActorClosed,
+                TransportClosing = (msg, manual, token) => base.CloseAsync(msg, token),
+                Logger = this.Logger,
+                Client = this,
+                FindDmtpActor = this.m_findDmtpActor,
+                CreatedChannel = this.OnDmtpActorCreateChannel,
+                MaxPackageSize = this.Config.AdapterOption?.MaxPackageSize ?? new DmtpAdapter().MaxPackageSize,
+            };
+            this.m_dmtpAdapter = new DmtpAdapter();
+            this.m_dmtpAdapter.Config(this.Config);
+            this.m_tokenSourceForReceive = new CancellationTokenSource();
+
+            var dmtpOption = this.Config.GetValue(DmtpConfigExtension.DmtpOptionProperty);
+            ThrowHelper.ThrowIfNull(dmtpOption, nameof(dmtpOption));
+
+            await this.m_dmtpActor.ConnectAsync(dmtpOption, cancellationToken).ConfigureDefaultAwait();
+        }
+        catch (Exception ex)
+        {
+            await this.WebSocketCloseAsync(ex.Message, false, CancellationToken.None).ConfigureDefaultAwait();
+            throw;
+        }
+        finally
+        {
+            this.m_connectionSemaphore.Release();
+        }
+    }
+
+    #endregion 连接
+
+    /// <inheritdoc/>
+    public IDmtpActor DmtpActor => this.m_dmtpActor;
+
+    /// <inheritdoc/>
+    public string Id => this.m_dmtpActor?.Id;
+
+    /// <inheritdoc/>
+    public override bool Online => base.Online && this.m_dmtpActor != null && this.m_dmtpActor.Online;
+
+
+    /// <inheritdoc/>
+    public override Task<Result> CloseAsync(string msg, CancellationToken cancellationToken = default)
+    {
+        return this.m_dmtpActor?.CloseAsync(msg, cancellationToken) ?? base.CloseAsync(msg, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public Task ResetIdAsync(string newId, CancellationToken cancellationToken = default)
+    {
+        return this.m_dmtpActor.ResetIdAsync(newId, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    protected override void LoadConfig(TouchSocketConfig config)
+    {
+        base.LoadConfig(config);
+        var dmtpRouteService = this.Resolver.Resolve<IDmtpRouteService>();
+        if (dmtpRouteService != null)
+        {
+            this.m_allowRoute = true;
+            this.m_findDmtpActor = dmtpRouteService.FindDmtpActor;
+        }
+    }
+
+    /// <inheritdoc/>
+    protected override async Task OnWebSocketReceived(WebSocketMessageType messageType, ReadOnlySequence<byte> sequence)
+    {
+        try
+        {
+            using (var buffer = new ContiguousMemoryBuffer(sequence))
+            {
+                if (buffer.Memory.Length > this.m_dmtpAdapter.MaxPackageSize)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(sequence), "Dmtp报文超过最大包长。");
+                }
+                var message = DmtpMessage.CreateFrom(buffer.Memory);
+                if (!await this.m_dmtpActor.InputReceivedData(message).ConfigureDefaultAwait())
+                {
+                    await this.PluginManager.RaiseIDmtpReceivedPluginAsync(this.Resolver, this, new DmtpMessageEventArgs(message)).ConfigureDefaultAwait();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            this.Logger?.Debug(this, ex);
+            await base.CloseAsync(ex.Message).ConfigureDefaultAwait();
+        }
+    }
+
+    #region 内部委托绑定
+
+    /// <inheritdoc/>
+    protected override async Task OnWebSocketClosed(ClosedEventArgs e)
+    {
+        var actor = this.m_dmtpActor;
+        try
+        {
+            if (actor != null)
+            {
+                if (actor.ClosedMessage.HasValue())
+                {
+                    e.Message = actor.ClosedMessage;
+                }
+                await actor.FinalizeAsync(e.Message, e.Exception).ConfigureDefaultAwait();
+            }
+            await base.OnWebSocketClosed(e).ConfigureDefaultAwait();
+        }
+        finally
+        {
+            actor.SafeDispose();
+        }
+    }
+
+    private Task OnDmtpActorClose(DmtpActor actor, string msg)
+    {
+        return this.OnDmtpClosing(new ClosingEventArgs(msg));
+    }
+
+    private Task OnDmtpActorClosed(DmtpActor actor, ClosedEventArgs e)
+    {
+        return this.OnDmtpClosed(e);
+    }
+
+    private Task OnDmtpActorCreateChannel(DmtpActor actor, CreateChannelEventArgs e)
+    {
+        return this.OnDmtpCreatedChannel(e);
+    }
+
+    private Task OnDmtpActorConnected(DmtpActor actor, DmtpVerifyEventArgs e)
+    {
+        return this.OnDmtpConnected(e);
+    }
+
+    private Task OnDmtpActorConnecting(DmtpActor actor, DmtpVerifyEventArgs e)
+    {
+        return this.OnDmtpConnecting(e);
+    }
+
+    private Task OnDmtpActorRouting(DmtpActor actor, PackageRouterEventArgs e)
+    {
+        return this.OnDmtpRouting(e);
+    }
+
+    private async Task OnDmtpActorSendAsync(DmtpActor actor, ReadOnlyMemory<byte> memory, CancellationToken cancellationToken)
+    {
+        await base.ProtectedSendAsync(memory, WebSocketMessageType.Binary, true, cancellationToken).ConfigureDefaultAwait();
+    }
+
+    #endregion 内部委托绑定
+
+    #region 事件触发
+
+    /// <summary>
+    /// 当创建通道时触发的事件处理程序
+    /// </summary>
+    /// <param name="e">包含通道创建信息的事件参数</param>
+    protected virtual async Task OnCreateChannel(CreateChannelEventArgs e)
+    {
+        // 如果事件已经被处理，则直接返回
+        if (e.Handled)
+        {
+            return;
+        }
+
+        // 异步调用插件管理器，通知所有实现IDmtpCreatedChannelPlugin接口的插件处理通道创建事件
+        await this.PluginManager.RaiseIDmtpCreatedChannelPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 已断开连接。
+    /// </summary>
+    /// <param name="e">包含断开连接信息的事件参数</param>
+    protected virtual async Task OnDmtpClosed(ClosedEventArgs e)
+    {
+        // 如果事件已经被处理，则直接返回
+        if (e.Handled)
+        {
+            return;
+        }
+        // 异步触发插件管理器中的 IDmtpClosedPlugin 接口的事件，并传递相关参数
+        await this.PluginManager.RaiseIDmtpClosedPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 当Dmtp即将被关闭时触发。
+    /// <para>
+    /// 仅在终端主动调用<see cref="IClosableClient.CloseAsync(string, System.Threading.CancellationToken)"/>时触发。
+    /// </para>
+    /// </summary>
+    /// <param name="e">提供了关闭事件的相关信息。</param>
+    /// <returns>返回一个Task对象，表示异步操作的完成。</returns>
+    protected virtual async Task OnDmtpClosing(ClosingEventArgs e)
+    {
+        // 如果关闭事件已经被处理，则直接返回，不再执行后续操作。
+        if (e.Handled)
+        {
+            return;
+        }
+        // 通知插件管理器，触发IDmtpClosingPlugin接口的事件处理程序，并传递相关参数。
+        await this.PluginManager.RaiseIDmtpClosingPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 在完成握手连接时
+    /// </summary>
+    /// <param name="e">包含握手信息的事件参数</param>
+    protected virtual async Task OnConnected(DmtpVerifyEventArgs e)
+    {
+        // 如果握手已经被处理，则不再执行后续操作
+        if (e.Handled)
+        {
+            return;
+        }
+        // 触发插件管理器中的握手完成插件事件
+        await this.PluginManager.RaiseIDmtpConnectedPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 即将握手连接时
+    /// </summary>
+    /// <param name="e">参数</param>
+    protected virtual async Task OnConnecting(DmtpVerifyEventArgs e)
+    {
+        // 如果握手已经被处理，则直接返回
+        if (e.Handled)
+        {
+            return;
+        }
+        // 触发握手过程的插件事件
+        await this.PluginManager.RaiseIDmtpConnectingPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 当需要转发路由包时
+    /// </summary>
+    /// <param name="e">包含路由包相关信息的事件参数</param>
+    protected virtual async Task OnRouting(PackageRouterEventArgs e)
+    {
+        // 如果事件已经被处理，则直接返回
+        if (e.Handled)
+        {
+            return;
+        }
+        // 异步调用插件管理器，通知所有实现了IDmtpRoutingPlugin接口的插件处理路由包
+        await this.PluginManager.RaiseIDmtpRoutingPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    #endregion 事件触发
+
+    /// <summary>触发Dmtp协议事件。</summary>
+    /// <param name="e">事件参数。</param>
+    protected virtual Task OnDmtpConnecting(DmtpVerifyEventArgs e) => this.OnConnecting(e);
+
+    /// <summary>触发Dmtp协议事件。</summary>
+    /// <param name="e">事件参数。</param>
+    protected virtual Task OnDmtpConnected(DmtpVerifyEventArgs e) => this.OnConnected(e);
+
+    /// <summary>触发Dmtp协议事件。</summary>
+    /// <param name="e">事件参数。</param>
+    protected virtual Task OnDmtpRouting(PackageRouterEventArgs e) => this.OnRouting(e);
+
+    /// <summary>触发Dmtp协议事件。</summary>
+    /// <param name="e">事件参数。</param>
+    protected virtual Task OnDmtpCreatedChannel(CreateChannelEventArgs e) => this.OnCreateChannel(e);
+}

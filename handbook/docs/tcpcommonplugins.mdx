@@ -1,0 +1,52 @@
+---
+id: tcpcommonplugins
+title: 常用插件
+---
+
+import BilibiliCard from '@site/src/components/BilibiliCard.js';
+import { TouchSocketDefinition } from "@site/src/components/Definition.js";
+import CardLink from '@site/src/components/CardLink.js';
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+<TouchSocketDefinition />
+
+
+## 一、健康活性检验插件
+
+健康活性检验插件（CheckClearPlugin）用于检测当前连接是否有正常的数据交流，如果没有，则主动断开连接。
+
+该插件可以用于客户端或服务器，但是一般建议仅用于服务器即可。
+
+工作原理非常简单。当连接建立时，会自动启动一个定时器，每隔一段时间（默认60秒），就会检验在该连接上，是否有数据交流。如果没有，则判定该客户端静默，或者已经无效。
+
+例如：在Tcp场景中，经常有客户端因为断网等原因，已经断开连接，但是又无法主动发送断开连接报文。则此后，如果服务器不主动发送数据，则会非常久的时间无法得知该客户端已经断开。
+
+所以需要使用该插件进行健康活性检验，以便及时断开无效连接。
+
+### 1.1 使用方法
+
+只需要在插件中添加`UseTcpSessionCheckClear`（或泛型的`UseCheckClear<TClient>`）即可。该插件支持以下配置选项：
+
+- **CheckClearType**：健康检验类型，默认是`CheckClearType.All`，即同时开启发送、接收健康检验，只要有一方有数据交互，即认为连接有效。
+  - `CheckClearType.OnlySend`：仅检测发送方向是否有数据流动
+  - `CheckClearType.OnlyReceive`：仅检测接收方向是否有数据流动
+  - `CheckClearType.All`：同时检测发送和接收两个方向
+- **Tick**：健康检验的间隔时间，默认是60秒。
+- **OnClose**：健康检验失败时的回调函数，默认是直接关闭连接并输出相应的超时消息。
+
+<CustomCodeBlock region="Tcp健康活性检验插件配置"/>
+
+:::info 温馨提示
+
+健康检验插件，可能因为操作系统定时器原因和检验周期原因，导致检验时间间隔比配置的间隔时间要长。一般来说，最坏情况不会超过设置周期的10%。例如：设置周期为100秒，则最坏情况可能到110秒才会执行清理。
+
+:::  
+
+### 1.2 示例代码
+
+<CardLink link="examples/Tcp/TcpConsoleApp"/>
+
+### 1.3 教学视频
+
+<BilibiliCard title="健康活性插件设置" link="https://www.bilibili.com/cheese/play/ep1541430" isPro="true"/>

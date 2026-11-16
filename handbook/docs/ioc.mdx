@@ -1,0 +1,163 @@
+---
+id: ioc
+title: 依赖注入容器(IOC)
+---
+
+import { TouchSocketCoreDefinition } from "@site/src/components/Definition.js";
+import CardLink from "@site/src/components/CardLink.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+<TouchSocketCoreDefinition />
+
+
+## 一、说明
+
+依赖注入（Dependency Injection，简称DI），是指程序运行过程中，如果需要调用另一个对象协助时，无须在代码中创建被调用者，而是依赖于外部的注入。
+
+通俗来讲，就是把有依赖关系的类放到容器中，然后在我们需要这些类时，容器自动解析出这些类的实例。
+
+依赖注入最大的好处是实现类的解耦，利于程序拓展、单元测试、自动化模拟测试等。
+
+`TouchSocket`内置了`Container`容器，提供了完整的依赖注入功能。
+
+## 二、特点
+
+- 支持构造函数注入
+- 支持三种生命周期：`Singleton`（单例）、`Scoped`（作用域）、`Transient`（瞬态）
+- 支持接口到实现类的映射注册
+- 支持泛型类型注册
+- 支持Key标识的多实例注册
+- 支持工厂方法注册
+- 兼容ASP.NET Core的`IServiceCollection`
+- 支持作用域解析器（IScopedResolver）
+- 支持AOT（Ahead-of-Time Compilation）。
+
+## 三、基础使用
+
+### 3.1 构造函数注入
+
+容器会自动解析构造函数的参数依赖，并注入所需的实例。
+
+【定义类型】
+
+<CustomCodeBlock region="IOC定义类型"/>
+
+【注册和解析】
+
+<CustomCodeBlock region="IOC构造函数注入"/>
+
+:::tip 提示
+
+容器会自动选择参数最多的构造函数进行实例化。
+
+:::
+
+## 四、生命周期
+
+`TouchSocket`支持三种生命周期，不同的生命周期决定了实例的创建和销毁策略。
+
+### 4.1 Singleton（单例）
+
+单例生命周期意味着在整个容器生命周期内，该类型只会创建一个实例，所有解析操作都会返回同一个实例。
+
+<CustomCodeBlock region="IOC单例生命周期"/>
+
+**使用场景**：适用于无状态的服务、配置对象、日志服务等。
+
+### 4.2 Transient（瞬态）
+
+瞬态生命周期意味着每次解析都会创建一个新的实例。
+
+<CustomCodeBlock region="IOC瞬态生命周期"/>
+
+**使用场景**：适用于轻量级、有状态的对象，或需要确保每次使用都是全新实例的服务。
+
+### 4.3 Scoped（作用域）
+
+作用域生命周期意味着在同一个作用域内，解析会返回同一个实例；在不同作用域内，会创建不同的实例。
+
+<CustomCodeBlock region="IOC作用域生命周期"/>
+
+**使用场景**：适用于需要在特定范围内共享状态的对象，如数据库上下文（DbContext）、HTTP请求处理器等。
+
+:::info 备注
+
+`Container`默认支持`Scoped`生命周期。如果需要与ASP.NET Core完全兼容的Scoped语义，可以使用`TouchSocket.Core.DependencyInjection`包中的`AspNetCoreContainer`。
+
+:::
+
+## 五、高级功能
+
+### 5.1 使用Key注册
+
+支持为同一类型注册多个实例，使用不同的Key进行区分。
+
+<CustomCodeBlock region="IOC使用Key注册"/>
+
+### 5.2 使用工厂方法注册
+
+可以使用自定义工厂方法来创建实例，获得更灵活的控制。
+
+<CustomCodeBlock region="IOC使用工厂方法注册"/>
+
+### 5.3 接口映射
+
+支持将接口映射到具体的实现类。
+
+<CustomCodeBlock region="IOC接口映射注册"/>
+
+### 5.4 泛型类型注册
+
+支持注册泛型类型定义，容器会自动处理具体的泛型参数。
+
+<CustomCodeBlock region="IOC泛型类型注册"/>
+
+## 六、使用AspNetCoreContainer
+
+如果需要与ASP.NET Core的依赖注入系统集成，可以使用`TouchSocket.Core.DependencyInjection`包中的`AspNetCoreContainer`。
+
+首先，安装NuGet包：`TouchSocket.Core.DependencyInjection`。
+
+然后使用`AspNetCoreContainer`替代`Container`：
+
+<CustomCodeBlock region="IOC使用AspNetCoreContainer"/>
+
+在TouchSocket配置中使用：
+
+<CustomCodeBlock region="IOC配置中使用ServiceCollection"/>
+
+:::tip 优势
+
+使用`AspNetCoreContainer`可以：
+- 与ASP.NET Core的DI系统完全兼容
+- 支持所有ASP.NET Core的依赖注入特性
+- 实现服务注册的共享和复用
+
+:::
+
+## 七、API参考
+
+### 注册方法
+
+| 方法 | 说明 |
+|------|------|
+| `RegisterSingleton<T>()` | 注册单例服务 |
+| `RegisterSingleton<TFrom, TTo>()` | 注册单例接口映射 |
+| `RegisterTransient<T>()` | 注册瞬态服务 |
+| `RegisterTransient<TFrom, TTo>()` | 注册瞬态接口映射 |
+| `RegisterScoped<T>()` | 注册作用域服务 |
+| `RegisterScoped<TFrom, TTo>()` | 注册作用域接口映射 |
+
+### 解析方法
+
+| 方法 | 说明 |
+|------|------|
+| `Resolve<T>()` | 解析指定类型的实例 |
+| `Resolve<T>(object key)` | 解析指定Key的实例 |
+| `CreateScopedResolver()` | 创建作用域解析器 |
+
+
+## 八、示例代码
+
+<CardLink link="examples/Core/IocConsoleApp"/>

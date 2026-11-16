@@ -1,0 +1,208 @@
+---
+id: fastbinaryformatter
+title: 高性能二进制序列化
+---
+
+import { TouchSocketCoreDefinition } from "@site/src/components/Definition.js";
+import CardLink from "@site/src/components/CardLink.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+<TouchSocketCoreDefinition />
+
+
+## 一、说明
+
+该序列化以二进制方式进行序列化，内存和性能都非常好。并且在序列化和反序列化时支持兼容类型，甚至可以像Json一样不同类型也可以。
+
+目前支持的类型有：
+- 基础类型
+- 自定义实体类、结构体
+- 元组
+- 支持类型组成的数组、字典、List等。
+
+:::tip 提示
+
+实际上经过自定义转化器，可以实现对**任意类型**的序列化和反序列化。
+
+:::  
+
+## 二、基本使用
+
+### 2.1 简单使用
+
+一般的，可以非常简单的对支持类型进行序列化和反序列化。
+
+<CustomCodeBlock region="FastBinary简单使用"/>
+
+### 2.2 使用内存池块
+
+在使用过程中，如果使用到频繁的序列化、反序列化，可以使用内存块，可以减少内存的申请和释放。
+
+<CustomCodeBlock region="FastBinary使用内存池块"/>
+
+### 2.3 使用值类型内存池块
+
+常规内存块是"类"，所以在使用时，自身对象会产生GC垃圾，如果追求极致序列化，则可以使用值类型内存池块，可以做到**零GC**分配。
+
+<CustomCodeBlock region="FastBinary使用值类型内存池块"/>
+
+## 三、常规配置
+
+`FastBinaryFormatter`默认情况下，支持的自定义类型必须具有**公共无参构造函数**。对于成员，仅支持**公共的属性和字段**。并且对于属性，要求必须是**可读可写**，对于只读属性，默认也是不做序列化和反序列化的。
+
+例如：下列类型中，只有`P1`和`P3`成员将有效。
+
+<CustomCodeBlock region="FastBinary常规配置示例类"/>
+
+### 3.1 忽略成员
+
+忽略成员，可以通过特性`[FastNonSerialized]`来忽略。
+
+在上面的`MyClass1`类中，`P6`属性使用了`[FastNonSerialized]`特性标记，因此不会被序列化。
+
+### 3.2 强制成员
+
+对于只读成员，有时候也需要序列化时，可以通过特性`[FastSerialized]`来强制。
+
+在上面的`MyClass1`类中，`P7`属性虽然set访问器是private的，但使用了`[FastSerialized]`特性后，仍然会被序列化。
+
+:::caution 注意
+
+强制特性虽然可以将成员添加在操作行列，但是如果成员绝对不可写（或者不可读）时，执行相应操作则会抛出异常。
+
+:::  
+
+## 四、兼容类型
+
+在序列化和反序列化时，并不要求类型一致，只要类型成员名称一致，且对应名称的基础类型一致，即可进行转换。
+
+例如：下列`MyClass2`与`MyClass3`是两个不同类型
+
+<CustomCodeBlock region="FastBinary兼容类型类定义"/>
+
+也可以互相序列化和反序列化。
+
+<CustomCodeBlock region="FastBinary兼容类型使用"/>
+
+反序列化后的`MyClass3`的P1值为10，P2值为null。
+
+但如果是成员名称一致，但基础类型不一致的，则不会成功，且可能会抛出异常。
+
+:::tip 提示
+
+兼容类型的使用，可以一定程度的解决一些兼容性问题，尤其是增加、或移除成员时都可以兼容。但是当修改成员类型时，可能会导致序列化数据丢失。
+
+:::  
+
+## 五、特性成员
+
+默认情况下，确定成员的方式的是**成员名称**。当成员名称较长时（最大255字节），可能会大大增加序列化后的体积。
+
+那这时候，就可以使用特性来确定成员。它使用的是一个`byte`值，来确定成员。
+
+例如：
+
+对于下列类，如果不使用特性，序列化体积可达**40字节**。使用特性后，体积可以减少到**18字节**。
+
+<CustomCodeBlock region="FastBinary特性成员示例类"/>
+
+:::info 信息
+
+使用特性来确定成员唯一性时，使用的是byte类型的值，所以它只允许最多有*255*个成员（即属性和字段的总数量）。
+
+:::  
+
+
+## 六、自定义转换器
+
+使用自定义转化器，可以解决**所有类型**的序列化与反序列化，并且可以对特定类型进行优化。
+
+例如：
+
+对于下列类，只有两个int类属性是有效值。
+
+<CustomCodeBlock region="FastBinary自定义转换器示例类"/>
+
+所以，我们需要自定义一个转换器。来将这2个`int`值，转换成有效数据。
+
+首先，声明一个转换器类，继承`FastBinaryConverter<T>`，或者实现`IFastBinaryConverter`接口。
+
+然后实现`Read`和`Write`方法。实现逻辑如下：
+
+<CustomCodeBlock region="FastBinary自定义转换器实现"/>
+
+:::info 信息
+
+在转化器中，我们不需要考虑操作对象为`null`的情况。但是得考虑属性值为`null`的情况。
+
+:::  
+
+最后附加转换器即可，可以通过在类上添加`[FastConverter]`特性：
+
+<CustomCodeBlock region="FastBinary自定义转换器示例类"/>
+
+或者直接往`FastBinaryFormatter`中添加转换器。
+
+<CustomCodeBlock region="FastBinary添加转换器"/>
+
+:::caution 注意
+
+使用自定义转化器后，所有的类型兼容问题，都必须自己解决。如示例所示，我们是按顺序写入和读取的，所以一般来说，新增属性是可以的，但是移除属性时，可能得手动解决一些问题。
+
+:::  
+
+## 七、包模式序列化
+
+`FastBinaryFormatter`支持一种特殊的序列化方式，[包序列化模式](./ipackage.mdx) 。可以解决一些特殊场景下的序列化，其性能更高。
+
+并且，默认情况下，已经内置了转换器。
+
+只需要对需要转换的对象实现`IPackage`接口（或继承`PackageBase`）即可。
+
+当然，在包模式的**源生成**可用时，也可以直接用源生成的方式实现更多细节。
+
+<CustomCodeBlock region="FastBinary包模式序列化示例类"/>
+
+<details>
+<summary>由源生成的代码</summary>
+<div>
+
+```csharp showLineNumbers
+/*
+此代码由SourceGenerator工具直接生成，非必要请不要修改此处代码
+*/
+#pragma warning disable
+using System;
+using System.Diagnostics;
+using TouchSocket.Core;
+using System.Threading.Tasks;
+
+namespace FastBinaryFormatterConsoleApp
+{
+    [global::System.CodeDom.Compiler.GeneratedCode("TouchSocket.SourceGenerator", "2.1.0.0")]
+    partial class MyClass6
+    {
+        public override void Package<TByteBlock>(ref TByteBlock byteBlock)
+        {
+            byteBlock.WriteInt32(P1);
+            byteBlock.WriteInt32(P2);
+        }
+
+        public override void Unpackage<TByteBlock>(ref TByteBlock byteBlock)
+        {
+            P1 = byteBlock.ReadInt32();
+            P2 = byteBlock.ReadInt32();
+        }
+    }
+}
+```
+
+</div>
+</details>
+
+:::caution 注意
+
+当使用包模式序列化时，类型兼容性将跟随包类型一致。一般来说，新增属性是允许的，但是修改或移除属性是不允许的。
+
+:::  

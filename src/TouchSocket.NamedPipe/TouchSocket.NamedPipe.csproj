@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFrameworks>net462;netstandard2.0;netstandard2.1;net6.0;net10.0;net8.0</TargetFrameworks>
+		<PackageTags>Pipeline;NamedPipe;Ipc;TouchSocket</PackageTags>
+		<Description>这是一个基于命名管道的组件库。它模仿Tcp封装了命名管道的服务器和客户端，以及连接、断开连接等消息。功能上实现了多管道名称监听、流式数据解析，以极致接近Tcp的体验使用命名管道。
+
+说明文档：https://touchsocket.net/	</Description>
+		<Title>TouchSocket</Title>
+	</PropertyGroup>
+
+	<ItemGroup>
+	  <Compile Include="..\TouchSocket.Shared\Core\ThrowHelperCore.cs" Link="Exceptions\ThrowHelperCore.cs" />
+	  <Compile Include="..\TouchSocket.Shared\Sockets\BaseTransport.cs" Link="Transports\BaseTransport.cs" />
+	  <Compile Include="..\TouchSocket.Shared\Sockets\InternalClientCollection.cs" Link="Common\InternalClientCollection.cs" />
+	  <Compile Include="..\TouchSocket.Shared\Sockets\PluginRaiseExtension.cs" Link="Extensions\PluginRaiseExtension.cs" />
+	  <Compile Include="..\TouchSocket.Shared\Sockets\StreamTransport.cs" Link="Transports\StreamTransport.cs" />
+	  <Compile Include="..\TouchSocket.Shared\Sockets\ThrowHelperSockets.cs" Link="Exceptions\ThrowHelperSockets.cs" />
+	  <Compile Include="..\TouchSocket.Shared\Sockets\WaitingResponseCore.cs" Link="Common\WaitingResponseCore.cs" />
+	  <Compile Include="..\TouchSocket.Shared\Sockets\SessionRunContext.cs" Link="Common\SessionRunContext.cs" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\TouchSocket\TouchSocket.csproj" />
+	</ItemGroup>
+
+	<!--全局命名空间-->
+	<ItemGroup>
+		<Using Include="TouchSocket.Sockets" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="Exceptions\" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<AdditionalFiles Include="../TouchSocket/Components/Tcp/TcpClientBase.cs" />
+	</ItemGroup>
+</Project>

@@ -1,0 +1,180 @@
+---
+id: dynamicmethod
+title: 动态方法调用(DynamicMethod)
+---
+
+import CardLink from "@site/src/components/CardLink.js";
+import { TouchSocketCoreDefinition } from "@site/src/components/Definition.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+
+
+<TouchSocketCoreDefinition />
+
+
+## 一、说明
+
+动态方法调用模块提供了一种高效、灵活的方法调用方案，可以在运行时动态调用被`[DynamicMethod]`标记的方法。该模块会优先使用源生成器生成高性能调用代码，在源生成不可用时自动降级为表达式树或反射方式。
+
+## 二、特性
+
+- **源生成优先**：编译时自动生成方法调用代码，零反射开销
+- **AOT友好**：完美支持AOT环境（如iOS/Android），无运行时代码生成
+- **自动降级**：源生成不可用时自动使用表达式树，最后降级为反射
+- **异步支持**：自动识别Task/Task\<T\>返回值，支持异步调用
+- **完整参数支持**：支持out参数、ref参数
+- **扩展性强**：支持自定义特性继承`DynamicMethodAttribute`
+
+## 三、快速开始
+
+### 3.1 标记方法
+
+使用`[DynamicMethod]`特性标记需要动态调用的方法：
+
+<CustomCodeBlock region="标记方法示例"/>
+
+### 3.2 调用方法
+
+创建`Method`实例并调用：
+
+<CustomCodeBlock region="简单调用示例"/>
+
+## 四、核心API
+
+### 4.1 Method类
+
+`Method`类是动态方法调用的核心类，提供以下构造函数：
+
+```csharp showLineNumbers
+// 从MethodInfo创建
+public Method(MethodInfo method)
+
+// 从类型和方法名创建
+public Method(Type targetType, string methodName)
+
+// 使用自定义IDynamicMethodInfo创建
+public Method(MethodInfo method, IDynamicMethodInfo dynamicMethodInfo)
+```
+
+:::info 自动选择策略
+使用第一、二种构造函数时，`Method`会按以下优先级自动选择实现方式：
+1. 源生成器（SourceGenerator） - 优先使用
+2. 表达式树（Expression） - 源生成不可用时
+3. 反射（Reflect） - 表达式树失败时的保底方案
+:::
+
+### 4.2 Method属性
+
+```csharp showLineNumbers
+// 方法元数据
+public MethodInfo Info { get; }
+
+// 方法名称
+public string Name { get; }
+
+// 返回值类型枚举
+public MethodReturnKind ReturnKind { get; }
+
+// 是否有返回值（void和Task视为无返回值）
+public bool HasReturn { get; }
+
+// 真实返回类型（Task<T>时为T，void/Task时为null）
+public Type RealReturnType { get; }
+
+// 是否为可等待方法（返回Task或Task<T>）
+public bool IsAwaitable { get; }
+```
+
+### 4.3 MethodReturnKind枚举
+
+```csharp showLineNumbers
+public enum MethodReturnKind
+{
+    Void,              // void方法
+    Object,            // 返回对象
+    Awaitable,         // 返回Task
+    AwaitableObject    // 返回Task<T>
+}
+```
+
+## 五、使用示例
+
+### 5.1 同步方法调用
+
+<CustomCodeBlock region="标记方法示例"/>
+
+<CustomCodeBlock region="简单调用示例"/>
+
+### 5.2 异步Task调用
+
+<CustomCodeBlock region="异步Task调用声明"/>
+
+<CustomCodeBlock region="异步Task调用"/>
+
+### 5.3 异步Task\<T\>调用
+
+<CustomCodeBlock region="异步Task泛型调用声明"/>
+
+<CustomCodeBlock region="异步Task泛型调用"/>
+
+### 5.4 out和ref参数
+
+<CustomCodeBlock region="out和ref参数声明"/>
+
+<CustomCodeBlock region="out和ref参数调用"/>
+
+### 5.5 自定义动态方法特性
+
+可以创建继承自`DynamicMethodAttribute`的自定义特性，源生成器会自动识别：
+
+<CustomCodeBlock region="自定义特性声明"/>
+
+<CustomCodeBlock region="自定义特性调用"/>
+
+## 六、性能测试
+
+### 6.1 性能对比
+
+以下是10000次调用的性能测试结果（基于示例项目AotDynamicMethodConsoleApp）：
+
+<CustomCodeBlock region="性能测试声明"/>
+
+<CustomCodeBlock region="性能测试代码"/>
+
+:::tip 性能建议
+- **推荐使用源生成器**：源生成器方式性能最佳，接近直接调用性能
+- **缓存Method实例**：避免重复创建`Method`对象，应在初始化时创建并缓存
+- **AOT环境必用源生成**：在AOT环境下，源生成器是唯一高性能选择
+:::
+
+### 6.2 实现方式对比
+
+| 实现方式 | 性能 | AOT支持 | 说明 |
+|---------|------|---------|------|
+| 源生成器 | ⭐⭐⭐⭐⭐ | ✅ | 编译时生成，零反射，性能最佳 |
+| 表达式树 | ⭐⭐⭐⭐ | ⚠️ | 运行时编译，性能优秀，部分AOT不支持 |
+| 反射 | ⭐⭐ | ✅ | 保底方案，性能较低 |
+
+## 七、注意事项
+
+### 7.1 标记要求
+
+- 方法必须使用`[DynamicMethod]`特性或其派生特性标记
+- 源生成器在编译时扫描特性，运行时添加特性无效
+
+### 7.2 源生成器限制
+
+- 源生成器只处理当前程序集中标记的方法
+- 跨程序集的方法需要在定义程序集中标记
+- 私有方法也可以标记，但需要注意访问权限
+
+### 7.3 使用建议
+
+**✅ 推荐：缓存Method实例**
+
+<CustomCodeBlock region="缓存Method实例推荐"/>
+
+## 八、示例项目
+
+<CardLink link="examples/Core/AotDynamicMethodConsoleApp"/>

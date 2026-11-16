@@ -1,0 +1,250 @@
+---
+id: websocketclient
+title: 创建WebSocket客户端
+---
+
+import Tag from "@site/src/components/Tag.js";
+import CardLink from "@site/src/components/CardLink.js";
+import BilibiliCard from '@site/src/components/BilibiliCard.js';
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import { TouchSocketHttpDefinition } from "@site/src/components/Definition.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+
+<TouchSocketHttpDefinition />
+
+## 一、说明
+
+`WebSocketClient`是WebSocket系客户端基类，它直接参与WebSocket的连接、握手、发送、接收、处理、断开等。它基于HTTP协议升级而来，与服务器的`HttpSessionClient`中的`WebSocket`实例是一一对应的通信关系。
+
+## 二、特点
+
+- 简单易用，支持ws和wss协议。
+- 支持自定义握手请求头。
+- 内置心跳机制(Ping/Pong)。
+- 支持文本和二进制数据传输。
+- 支持大数据包的中继传输。
+- 支持断线重连机制。
+- 内存池支持，高性能处理。
+- 基于委托、插件驱动，支持AOP编程。
+
+## 三、产品应用场景
+
+- 实时通信应用：聊天室、在线客服、即时消息推送。
+- 在线协作：多人在线编辑、实时数据同步。
+- 物联网通信：设备状态监控、远程控制。
+- 游戏开发：实时游戏数据交换。
+- 金融交易：实时股票行情、交易数据推送。
+- 实时监控：系统监控、数据大屏展示。
+
+## 四、可配置项
+
+`WebSocketClient`继承自[HttpClient](./httpclient.mdx)，所以支持所有[HttpClient](./httpclient.mdx)的配置项，无特有配置。
+
+## 五、支持插件接口
+
+|  插件方法| 功能 |
+| --- | --- |
+| IWebSocketConnectingPlugin | 当收到握手请求之前，可以进行连接验证、自定义请求头等 |
+| IWebSocketConnectedPlugin | 当成功握手响应之后触发 |
+| IWebSocketReceivedPlugin | 当收到WebSocket的数据报文时触发 |
+| IWebSocketClosingPlugin | 当收到关闭请求时触发，如果对方直接断开连接，此方法则不会触发 |
+| IWebSocketClosedPlugin | 当WebSocket连接断开时触发，无论是否正常断开。但如果是断网等操作，可能不会立即执行，需要结合心跳操作和CheckClear插件来进行清理 |
+
+## 六、创建WebSocket客户端
+
+### 6.1 简单创建
+
+简单的处理逻辑可通过**Received**等委托直接实现。
+
+<BilibiliCard title="使用ws完成基本的数据接收和发送" link="https://www.bilibili.com/cheese/play/ep1709023" isPro="true"/>
+
+<CustomCodeBlock region="简单创建WebSocket客户端"/>
+
+### 6.2 继承实现
+
+一般继承实现的话，可以从`WebSocketClient`继承。
+
+<CustomCodeBlock region="从继承创建WebSocket客户端"/>
+
+### 6.3 创建WSS客户端
+
+当需要连接到由证书机构颁发的网址（例如：小程序、物联网等）时，仅需要设置带有`wss`的url即可。当需要连接到自签名证书的网站时，则需要额外设置，详情请参考[HttpClient证书配置](./httpclient.mdx)。
+
+## 七、连接服务器
+
+`WebSocketClient`可以使用默认配置直接连接到服务器，同时也支持使用多种方法定义连接。
+
+### 7.1 直接连接
+
+使用`url`直接建立连接，这一般是服务器也只是普通的`ws`服务器的情况下。
+
+<CustomCodeBlock region="WebSocket直接连接服务器"/>
+
+### 7.2 带Query参数连接
+
+带`Query`参数连接，实际上还是通过`url`直接连接。
+
+<CustomCodeBlock region="WebSocket带Query参数连接"/>
+
+### 7.3 使用特定Header连接
+
+一般的，当某些服务器安全级别较高时，可能会定制特定的`header`用于验证连接。
+
+<CustomCodeBlock region="WebSocket使用特定Header连接"/>
+
+### 7.4 使用Post方式连接
+
+`WebSocket`默认情况下是基于`Get`方式连接的，但是在一些更特殊的情况下，需要以`Post`，甚至其他方式连接，那么可以使用以下方式实现。
+
+<CustomCodeBlock region="WebSocket使用Post方式连接"/>
+
+:::tip 提示
+
+使用此方式时，基本上就能完全定制请求连接了。比如一些`Cookie`等。
+
+:::
+
+## 八、接收数据
+
+在`WebSocketClient`中，接收数据的方式有很多种。多种方式可以组合使用。
+
+### 8.1 Received委托处理
+
+当使用`WebSocketClient`创建客户端时，内部已经定义好了一个外置委托`Received`，可以通过该委托直接接收数据。
+
+<CustomCodeBlock region="WebSocket客户端使用Received委托接收数据"/>
+
+### 8.2 继承WebSocketClient重写接收逻辑
+
+如6.2所示，如果需要更自定义的接收逻辑，可以从`WebSocketClient`继承，然后重写`OnWebSocketReceived`方法。
+
+### 8.3 使用插件接收数据
+
+使用插件接收消息是最推荐的方式，它提供了高度解耦和灵活的数据处理能力。
+
+**（1）定义插件：**
+
+<CustomCodeBlock region="创建WebSocket接收插件"/>
+
+**（2）配置使用插件：**
+
+<CustomCodeBlock region="使用WebSocket接收插件"/>
+
+:::tip 提示
+
+在客户端端，默认情况下插件的所有函数都是线程安全的。
+
+:::
+
+### 8.4 异步阻塞接收
+
+异步阻塞接收是通过直接调用`WebSocket`的`ReadAsync`方法来同步阻塞式读取数据。这种方式的特点是能在代码上下文中直接获取数据，便于处理复杂的数据逻辑。
+
+一般的，在刚连接成功调用`ReadAsync`方法来接收数据。
+
+<BilibiliCard title="使用ReadAsync的方式读取ws数据" link="https://www.bilibili.com/cheese/play/ep1709028" isPro="true"/>
+
+<CustomCodeBlock region="WebSocket客户端使用ReadAsync读取数据"/>
+
+:::info 信息
+
+`ReadAsync`方式是**异步非阻塞**的接收方式，不会占用线程资源，只会阻塞当前`Task`。因此可以大量使用，不需要考虑性能问题。
+
+:::
+
+:::caution 注意
+
+使用`ReadAsync`方式会终止触发`IWebSocketReceivedPlugin`插件。
+
+:::
+
+### 8.5 接收中继数据
+
+WebSocket在接收大数据时，可能会分包接收。可以通过`WSDataFrame.Opcode`的值是不是`WSDataType.Cont`来判断是不是分包数据。
+
+分包数据的处理方式有很多，下面提供一种内存缓存的方式：
+
+<CustomCodeBlock region="WebSocket处理中继数据"/>
+
+:::caution 注意
+
+内存缓存的方式适合数据量不大的场景，如果数据量较大，建议使用其他缓存等方式。
+
+:::  
+
+## 九、发送数据
+
+客户端定义了一些发送方法，方便开发者快速发送数据。
+
+<BilibiliCard title="使用ws完成基本的数据接收和发送" link="https://www.bilibili.com/cheese/play/ep1709023" isPro="true"/>
+
+### 9.1 发送文本消息
+
+<CustomCodeBlock region="WebSocket发送文本"/>
+
+### 9.2 发送二进制消息
+
+<CustomCodeBlock region="WebSocket发送二进制"/>
+
+### 9.3 发送自定义数据帧
+
+<CustomCodeBlock region="WebSocket发送自定义消息"/>
+
+:::info 备注
+
+此部分功能需要对`WebSocket`协议有充分了解才可以操作。
+
+:::
+
+### 9.4 发送Ping、Pong消息
+
+<CustomCodeBlock region="WebSocket发送Ping或者Pong消息"/>
+
+<BilibiliCard title="ws的Ping和Pong的使用" link="https://www.bilibili.com/cheese/play/ep1709027" isPro="true"/>
+
+<BilibiliCard title="使用ws的心跳数据包" link="https://www.bilibili.com/cheese/play/ep1709032" isPro="true"/>
+
+:::tip 建议
+
+`WebSocket`是双向通讯，所以支持客户端和服务器双向操作`Ping`和`Pong`报文。但是一般来说都是客户端执行`Ping`，服务器回应`Pong`。
+
+:::
+
+### 9.5 发送大数据（分包）
+
+发送大数据时，可能需要分包发送，可以使用`SendAsync`的重载方法，设置`FIN`标志。
+
+<CustomCodeBlock region="WebSocket发送分包数据"/>
+
+## 十、连接管理
+
+### 10.1 连接状态检查
+
+`WebSocket`拥有独立的握手机制，可以通过`Online`属性检查连接状态。
+
+### 10.2 关闭连接
+
+在使用`WebSocket`时，如果想主动关闭连接，可以使用`CloseAsync`方法，同时可以携带一个关闭原因。
+
+默认关闭状态码为1000，意为：正常关闭。
+
+<CustomCodeBlock region="WebSocket关闭连接"/>
+
+<BilibiliCard title="主动处理ws的Close报文" link="https://www.bilibili.com/cheese/play/ep1709025" isPro="true"/>
+
+### 10.3 断线重连
+
+`WebSocket`断线重连，可以直接使用插件。
+
+<CustomCodeBlock region="WebSocket断线重连"/>
+
+<BilibiliCard title="WebSocket的断线重连以及无人值守模式" link="https://www.bilibili.com/cheese/play/ep1709031" isPro="true"/>
+
+
+
+## 十一、示例Demo
+
+<CardLink link="examples/WebSocket/WebSocketConsoleApp"/>

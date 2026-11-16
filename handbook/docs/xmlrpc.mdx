@@ -1,0 +1,126 @@
+---
+id: xmlrpc
+title: 产品及架构介绍
+---
+
+import { TouchSocketXmlRpcDefinition } from "@site/src/components/Definition.js";
+import Tag from "@site/src/components/Tag.js";
+import CardLink from "@site/src/components/CardLink.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+<TouchSocketXmlRpcDefinition />
+
+## 一、概述
+
+XmlRpc 是一种历史悠久的、跨语言、跨平台的远程过程调用（RPC）协议。其核心特征是：
+
+- 采用标准的 HTTP POST 作为传输承载
+- 请求与响应体使用 XML 进行结构化编码
+- 服务端按方法名称解析并执行，返回结果以 XML 封装
+
+协议规范参考（外部资料）：[XML-RPC 百度百科](https://baike.baidu.com/item/XML-RPC/0)
+
+TouchSocket 在此基础上提供了：
+
+- 统一的 RPC 服务注册与调度体系
+- 代理代码自动生成
+- 与其它 RPC（JsonRpc、DmtpRpc、WebApi）一致的调用体验
+- 插件化扩展能力
+
+## 二、核心特点
+
+- 异常反馈：出现业务或框架异常时能获得完整错误信息
+- 自定义类型：支持复杂对象序列化（内部完成 XML 解析映射）
+- 类型嵌套：支持多层级对象树结构
+- 统一调用范式：同一套 Invoke / 代理 调用模式
+- 动态代理：支持 DispatchProxy 方式快速构建接口式调用
+
+## 三、定义 RPC 服务
+
+### 3.1 服务端实现
+
+在服务器端创建一个类，继承 `SingletonRpcServer`（或实现 `IRpcServer`），对外暴露的公共方法使用 `XmlRpc` 特性标记。设置 `MethodInvoke = true` 时，将以方法名作为调用键（与标准 XmlRpc 方式一致）。
+
+<CustomCodeBlock region="声明XmlRpc服务"/>
+
+### 3.2 启动 Http 服务器
+
+XmlRpc 在本框架中主要基于 Http 承载。下面示例展示如何注册服务并启动：
+
+<CustomCodeBlock region="创建XmlRpc服务器"/>
+
+:::tip 提示
+
+更多注册与组合用法请参阅：[注册 Rpc 服务](./rpcregister.mdx)
+
+:::
+
+## 四、通用调用方式（原生 XmlRpc）
+
+作为通用协议，任何支持 HTTP 的语言/平台都可以直接构造标准 XmlRpc 报文：
+
+POST http://127.0.0.1:7789/xmlRpc
+
+```xml
+<?xml version="1.0"?>
+<methodCall>
+  <methodName>Sum</methodName>
+  <params>
+    <param>
+        <value>
+            <i4>10</i4>
+        </value>
+    </param>
+    <param>
+        <value>
+            <i4>20</i4>
+        </value>
+    </param>
+  </params>
+ </methodCall>
+```
+
+:::info 说明
+
+方法名需与服务端暴露的方法匹配，并满足 `MethodInvoke = true` 的调用键策略。
+
+:::
+
+## 五、专用客户端调用
+
+框架提供 `XmlRpcClient`，支持：
+
+1. 直接 `Invoke / InvokeT` 调用
+2. 代理扩展方法调用（由生成的代理代码提供）
+
+### 5.1 创建客户端
+
+<CustomCodeBlock region="创建XmlRpc客户端"/>
+
+### 5.2 直接 / 代理调用示例
+
+<CustomCodeBlock region="XmlRpc直接调用"/>
+
+## 六、代理调用
+
+首先，需要先生成代理调用代码，详情请参阅：[代理生成](./rpcgenerateproxy.mdx)
+
+将生成的 `RpcProxy.cs` 引入客户端项目，即可获得强类型扩展方法：
+
+<CustomCodeBlock region="XmlRpc代理调用"/>
+
+:::tip 提示
+
+XmlRpc 支持 RPC 平台的所有功能，如**过滤器**、**调度器**以及所有代理调用方式。
+
+:::  
+
+## 八、错误与调试
+
+- 服务端异常会封装为 XmlRpc Fault 返回
+- 建议开启控制台日志：`a.AddConsoleLogger()`
+- 可结合过滤器与插件进行性能统计、限流、鉴权（与其它 RPC 模块一致）
+
+## 九、示例工程
+
+<CardLink link="examples/XmlRpc" />

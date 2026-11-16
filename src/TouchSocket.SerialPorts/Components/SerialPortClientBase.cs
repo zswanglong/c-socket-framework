@@ -1,0 +1,399 @@
+//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.IO.Ports;
+using System.Runtime.CompilerServices;
+using TouchSocket.Resources;
+
+namespace TouchSocket.SerialPorts;
+
+/// <summary>
+/// 串口客户端基类
+/// </summary>
+[CodeInject.RegionInject(FileName = "TcpClientBase.cs", RegionName = "ReceiveLoopAsync", Placeholders = new[] { "OnTcpReceiving", "OnSerialReceiving" })]
+[CodeInject.RegionInject(FileName = "TcpClientBase.cs", RegionName = "内置常规数据发送", Placeholders = new[] { "OnTcpSending", "OnSerialSending" })]
+public abstract partial class SerialPortClientBase : SetupConfigObject, ISerialPortSession
+{
+    /// <summary>
+    /// 串口客户端基类
+    /// </summary>
+    public SerialPortClientBase()
+    {
+        this.Protocol = SerialPortUtility.SerialPort;
+    }
+
+    #region 变量
+
+    private readonly SemaphoreSlim m_semaphoreForConnectAndClose = new SemaphoreSlim(1, 1);
+    private int m_closeFlag;
+    private volatile SingleStreamDataHandlingAdapter m_dataHandlingAdapter;
+    private volatile bool m_online;
+    private Task m_runTask;
+    private SerialPortTransport m_transport;
+
+    #endregion 变量
+
+    #region 事件
+
+    private readonly BytesReaderEventArgs m_bytesReaderEventArgs = new BytesReaderEventArgs();
+    private readonly ReceivedDataEventArgs m_receivedDataEventArgs = new ReceivedDataEventArgs();
+    private readonly SendingEventArgs m_sendingEventArgs = new SendingEventArgs();
+
+    /// <summary>
+    /// 断开连接。在客户端未设置连接状态时，不会触发
+    /// </summary>
+    protected virtual async Task OnSerialClosed(ClosedEventArgs e)
+    {
+        await this.PluginManager.RaiseISerialClosedPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 即将断开连接(仅主动断开时有效)。
+    /// </summary>
+    protected virtual async Task OnSerialClosing(ClosingEventArgs e)
+    {
+        await this.PluginManager.RaiseISerialClosingPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 已经建立连接
+    /// </summary>
+    protected virtual async Task OnSerialConnected(ConnectedEventArgs e)
+    {
+        await this.PluginManager.RaiseISerialConnectedPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 准备连接的时候，此时并未建立连接
+    /// </summary>
+    protected virtual async Task OnSerialConnecting(ConnectingEventArgs e)
+    {
+        await this.PluginManager.RaiseISerialConnectingPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 当收到适配器处理的数据时。
+    /// </summary>
+    /// <returns>如果返回<see langword="true"/>则表示数据已被处理，且不会再向下传递。</returns>
+    protected virtual async Task OnSerialReceived(ReceivedDataEventArgs e)
+    {
+        await this.PluginManager.RaiseISerialReceivedPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 当收到原始数据时
+    /// </summary>
+    /// <param name="byteBlock">包含接收数据的字节块</param>
+    /// <returns>
+    /// 如果返回<see langword="true"/>则表示数据已被处理，且不会再向下传递。
+    /// 返回<see langword="false"/>则表示数据未被处理，可能会继续向下传递。
+    /// </returns>
+    protected virtual ValueTask<bool> OnSerialReceiving(IBytesReader byteBlock)
+    {
+        // 将原始数据传递给所有相关的预处理插件，以进行初步的数据处理
+        return this.PluginManager.RaiseISerialReceivingPluginAsync(this.Resolver, this, m_bytesReaderEventArgs.Reset(byteBlock));
+    }
+
+    /// <summary>
+    /// 在序列化发送前调用的虚拟方法。
+    /// </summary>
+    /// <param name="memory">待发送的字节序列。</param>
+    /// <returns>一个表示操作结果的<see cref="ValueTask{T}"/>，始终返回 true。</returns>
+    /// <remarks>
+    /// 此方法的存在是为了提供一个扩展点，允许在序列化数据发送之前进行自定义处理。
+    /// 默认实现直接返回 true，表示默认情况下允许序列化发送继续进行。
+    /// </remarks>
+    protected virtual ValueTask<bool> OnSerialSending(ReadOnlyMemory<byte> memory)
+    {
+        return this.PluginManager.RaiseISerialSendingPluginAsync(this.Resolver, this, m_sendingEventArgs.Reset(memory));
+    }
+
+    private Task PrivateOnClosing(ClosingEventArgs e)
+    {
+        return this.OnSerialClosing(e);
+    }
+
+    private async Task PrivateOnSerialConnecting(ConnectingEventArgs e)
+    {
+        await this.OnSerialConnecting(e).ConfigureDefaultAwait();
+        if (this.m_dataHandlingAdapter == null)
+        {
+            var adapter = this.Config.GetValue(TouchSocketConfigExtension.SingleStreamDataHandlingAdapterProperty)?.Invoke();
+            if (adapter != null)
+            {
+                this.SetAdapter(adapter);
+            }
+        }
+    }
+
+    private async Task RunSessionAsync(SerialPortTransport transport)
+    {
+        // 标记当前异步流程属于本会话，回调中调用关闭或重连时不再等待会话任务自身，避免死锁。
+        SessionRunContext.Enter(this);
+
+        try
+        {
+            await this.OnSerialConnected(new ConnectedEventArgs()).SafeWaitAsync().ConfigureDefaultAwait();
+            await this.ReceiveLoopAsync(transport).ConfigureDefaultAwait();
+        }
+        catch (Exception ex)
+        {
+            this.Logger?.Debug(this, ex);
+        }
+        finally
+        {
+            transport.SafeDispose();
+
+            this.m_online = false;
+            var adapter = this.m_dataHandlingAdapter;
+            this.m_dataHandlingAdapter = default;
+            adapter.SafeDispose();
+
+            await this.OnSerialClosed(transport.ClosedEventArgs).SafeWaitAsync().ConfigureDefaultAwait();
+        }
+    }
+
+    #endregion 事件
+
+    #region 属性
+
+    /// <inheritdoc/>
+    public CancellationToken ClosedToken => this.m_transport == null ? new CancellationToken(true) : this.m_transport.ClosedToken;
+
+    /// <inheritdoc/>
+    public bool IsClient => true;
+
+    /// <inheritdoc/>
+    public DateTimeOffset LastReceivedTime => this.m_transport?.ReceiveCounter.LastIncrement ?? default;
+
+    /// <inheritdoc/>
+    public DateTimeOffset LastSentTime => this.m_transport?.SendCounter.LastIncrement ?? default;
+
+    /// <inheritdoc/>
+    public bool Online => this.m_online && this.m_transport != null && this.m_transport.IsOpen;
+
+    /// <inheritdoc/>
+    public Protocol Protocol { get; protected set; }
+
+    /// <inheritdoc/>
+    protected SingleStreamDataHandlingAdapter ProtectedDataHandlingAdapter => this.m_dataHandlingAdapter;
+
+    /// <summary>
+    /// 获取底层传输层对象。
+    /// </summary>
+    protected ITransport Transport => this.m_transport;
+
+    /// <summary>
+    /// <see cref="SerialPortTransport"/>的<see cref="SerialPortTransport.SerialCore"/>属性的快捷访问器。
+    /// </summary>
+    /// https://gitee.com/RRQM_Home/TouchSocket/issues/IJM3F7
+    protected SerialPort SerialPort => this.m_transport?.SerialCore?.SerialPort;
+    #endregion 属性
+
+    #region 断开操作
+
+    /// <inheritdoc/>
+    public virtual async Task<Result> CloseAsync(string msg, CancellationToken cancellationToken = default)
+    {
+        SerialPortTransport transport = null;
+        Task runTask;
+
+        await this.m_semaphoreForConnectAndClose.WaitAsync(cancellationToken).ConfigureDefaultAwait();
+        try
+        {
+            if (!this.m_online)
+            {
+                runTask = this.m_runTask;
+                if (runTask == null)
+                {
+                    return Result.Success;
+                }
+            }
+            else if (Interlocked.CompareExchange(ref this.m_closeFlag, 1, 0) != 0)
+            {
+                runTask = this.m_runTask;
+            }
+            else
+            {
+                transport = this.m_transport;
+                runTask = this.m_runTask;
+
+                // 先占用关闭原因：若远端断开等已先记录了原因，本次关闭不再视为主动关闭，不触发 Closing，保证 Closing 与 Closed 的原因一致。
+                if (transport == null || transport.TrySetClosedEventArgs(new ClosedEventArgs(msg)))
+                {
+                    await this.PrivateOnClosing(new ClosingEventArgs(msg)).ConfigureDefaultAwait();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            return Result.FromException(ex);
+        }
+        finally
+        {
+            this.m_semaphoreForConnectAndClose.Release();
+        }
+
+        try
+        {
+            if (transport != null)
+            {
+                await transport.CloseAsync(msg, cancellationToken).ConfigureDefaultAwait();
+            }
+
+            if (runTask != null && !SessionRunContext.IsInSession(this))
+            {
+                await runTask.WithCancellation(cancellationToken).ConfigureDefaultAwait();
+            }
+
+            return Result.Success;
+        }
+        catch (Exception ex)
+        {
+            return Result.FromException(ex);
+        }
+    }
+
+    /// <inheritdoc/>
+    protected override void SafetyDispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _ = EasyTask.SafeRun(async () =>
+            {
+                await this.CloseAsync(TouchSocketResource.DisposeClose).ConfigureDefaultAwait();
+                this.m_semaphoreForConnectAndClose.SafeDispose();
+            });
+        }
+        base.SafetyDispose(disposing);
+    }
+
+    #endregion 断开操作
+
+    #region Connect
+
+    /// <summary>
+    /// 异步连接到串口设备。
+    /// </summary>
+    /// <param name="cancellationToken">用于取消操作的 <see cref="CancellationToken"/>。</param>
+    /// <returns>表示异步操作的任务。</returns>
+    protected async Task SerialPortConnectAsync(CancellationToken cancellationToken)
+    {
+        this.ThrowIfDisposed();
+        this.ThrowIfConfigIsNull();
+        await this.m_semaphoreForConnectAndClose.WaitAsync(cancellationToken).ConfigureDefaultAwait();
+
+        try
+        {
+            if (this.m_online)
+            {
+                return;
+            }
+
+            // 确保上次接收任务已经结束
+            var runTask = this.m_runTask;
+            if (runTask != null && !SessionRunContext.IsInSession(this))
+            {
+                await runTask.WithCancellation(cancellationToken).ConfigureDefaultAwait();
+            }
+
+            var serialPortOption = this.Config.GetValue(SerialPortConfigExtension.SerialPortOptionProperty);
+            ThrowHelper.ThrowIfNull(serialPortOption, nameof(serialPortOption));
+
+            SerialCore serialPort = null;
+            SerialPortTransport transport = null;
+
+            try
+            {
+                serialPort = CreateSerial(serialPortOption);
+                await this.PrivateOnSerialConnecting(new ConnectingEventArgs()).ConfigureDefaultAwait();
+
+                transport = new SerialPortTransport(serialPort, this.Config.GetValue(TouchSocketConfigExtension.TransportOptionProperty));
+                this.m_transport = transport;
+                this.m_online = true;
+                Interlocked.Exchange(ref this.m_closeFlag, 0);
+                this.m_runTask = this.RunSessionAsync(transport);
+            }
+            catch
+            {
+                transport.SafeDispose();
+                if (transport == null)
+                {
+                    serialPort.SafeDispose();
+                }
+
+                this.m_transport = default;
+                this.m_online = false;
+                throw;
+            }
+        }
+        finally
+        {
+            this.m_semaphoreForConnectAndClose.Release();
+        }
+    }
+
+    #endregion Connect
+
+    /// <summary>
+    /// 设置数据处理适配器。
+    /// </summary>
+    /// <param name="adapter">要设置的适配器实例。</param>
+    /// <exception cref="ArgumentNullException">如果提供的适配器实例为<see langword="null"/>，则抛出此异常。</exception>
+    protected void SetAdapter(SingleStreamDataHandlingAdapter adapter)
+    {
+        this.ThrowIfDisposed();
+
+        if (adapter is null)
+        {
+            this.m_dataHandlingAdapter = null;//允许Null赋值
+            return;
+        }
+
+        if (this.Config != null)
+        {
+            adapter.Config(this.Config);
+        }
+
+        adapter.OnLoaded(this);
+        adapter.ReceivedAsyncCallBack = this.PrivateHandleReceivedData;
+        this.m_dataHandlingAdapter = adapter;
+    }
+
+    private static SerialCore CreateSerial(SerialPortOption option)
+    {
+        var serialPort = new SerialPort(option.PortName, option.BaudRate, option.Parity, option.DataBits, option.StopBits)
+        {
+            Handshake = option.Handshake,
+            RtsEnable = option.RtsEnable,
+            DtrEnable = option.DtrEnable,
+
+            //pr:https://github.com/RRQM/TouchSocket/pull/123
+            ReadBufferSize = option.ReadBufferSize,
+            WriteBufferSize = option.WriteBufferSize
+        };
+
+        serialPort.Open();
+
+        if (!serialPort.IsOpen)
+        {
+            ThrowHelper.ThrowException(TouchSocketCoreResource.UnknownError);
+        }
+        return new SerialCore(serialPort, option.StreamAsync);
+    }
+
+    private async Task PrivateHandleReceivedData(ReadOnlyMemory<byte> memory, IRequestInfo requestInfo)
+    {
+        await this.OnSerialReceived(m_receivedDataEventArgs.Reset(memory, requestInfo)).ConfigureDefaultAwait();
+    }
+
+}

@@ -1,0 +1,196 @@
+<Project>
+
+	<Import Project="$../../../TouchSocketVersion.props" />
+	<Import Project="Props\*.props" />
+
+	<PropertyGroup>
+		<Version>$(TouchSocketVersion)</Version>
+		<SolutionDir Condition="'$(SolutionDir)'==''">$(MSBuildThisFileDirectory)..\</SolutionDir>
+		<CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<LangVersion>preview</LangVersion>
+		<Company>若汝棋茗</Company>
+		<Copyright>Copyright © 2026 若汝棋茗</Copyright>
+		<PackageProjectUrl>https://touchsocket.net/</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/RRQM/TouchSocket</RepositoryUrl>
+		<AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<Authors>若汝棋茗</Authors>
+		<BaseOutputPath>..\..\Build</BaseOutputPath>
+		<NoWarn>IDE0290;IDE0090;IDE0305;IDE0028;IDE0300;IDE0130;IDE0057</NoWarn>
+		<GenerateSatelliteAssemblies>true</GenerateSatelliteAssemblies>
+		<GenerateSatelliteAssembliesCore>true</GenerateSatelliteAssembliesCore>
+		<PackageOutputPath>$(SolutionDir)\Build\NugetPackages\Packages</PackageOutputPath>
+		<LogoFile>logo.png</LogoFile>
+		<ReadmeFile>Readme.md</ReadmeFile>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(MSBuildProjectName.StartsWith(`TouchSocketPro`))'">
+		<IsPro>True</IsPro>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(MSBuildProjectName.EndsWith(`SourceGenerator`))'">
+		<IsSourceGenerator>True</IsSourceGenerator>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+		<EnableDynamicLoading>true</EnableDynamicLoading>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)'=='Release'">
+		<AssemblyOriginatorKeyFile>$(MSBuildProjectName).snk</AssemblyOriginatorKeyFile>
+		<SignAssembly>True</SignAssembly>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="$(SolutionDir)Src\Resources\$(LogoFile)" Pack="true" PackagePath="\" />
+	</ItemGroup>
+
+	<!-- TargetFramework相关常量定义，保持分组简洁 -->
+	<PropertyGroup Condition="'$(TargetFramework)'=='netstandard2.0'">
+		<DefineConstants></DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetFramework)'=='net462'">
+		<DefineConstants></DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetFramework)'=='net472'">
+		<DefineConstants></DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetFramework)'=='net481'">
+		<DefineConstants>AsyncEnumerable;</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetFramework)'=='netstandard2.1'">
+		<DefineConstants>AsyncEnumerable;DefaultInterfaceMethods;</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetFramework)'=='net6.0'">
+		<DefineConstants>AsyncEnumerable;DisposeAsync;DefaultInterfaceMethods;CollectionsMarshal</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetFramework)'=='net10.0'">
+		<DefineConstants>AsyncEnumerable;DisposeAsync;DefaultInterfaceMethods;CollectionsMarshal</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetFramework)'=='net8.0'">
+		<DefineConstants>AsyncEnumerable;DisposeAsync;DefaultInterfaceMethods;CollectionsMarshal</DefineConstants>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(IsSourceGenerator)'!='True'">
+		<PackageReadmeFile>$(ReadmeFile)</PackageReadmeFile>
+	</PropertyGroup>
+	<ItemGroup Condition="'$(IsSourceGenerator)'!='True'">
+		<None Include="$(ReadmeFile)" Pack="true" PackagePath="\"/>
+	</ItemGroup>
+
+
+	<!-- 优化：统一LICENSE文件变量，合并重复配置，简化条件 -->
+	<PropertyGroup>
+		<LicenseFile Condition="'$(IsPro)'=='True'">LICENSEPRO.txt</LicenseFile>
+		<LicenseFile Condition="'$(IsPro)'!='True'">LICENSE.txt</LicenseFile>
+	</PropertyGroup>
+
+	<ItemGroup Condition="'!$(MSBuildProjectName.EndsWith(`SourceGenerator`))'">
+		<ProjectReference Include="..\TouchSocket.Core.SourceGenerator\TouchSocket.Core.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="$(SolutionDir)Src\Resources\$(LicenseFile)" Pack="true" PackagePath="\" />
+	</ItemGroup>
+
+	<!--全部配置相关-->
+	<PropertyGroup Condition="'$(IsSourceGenerator)'!='True'">
+		<PackageIcon>logo.png</PackageIcon>
+		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+		<IsAotCompatible>true</IsAotCompatible>
+	</PropertyGroup>
+
+	<!--Release发布配置相关-->
+	<PropertyGroup Condition="'$(Configuration)'=='Release' And '$(IsSourceGenerator)'!='True'">
+		<PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+		<PackageLicenseFile>$(LicenseFile)</PackageLicenseFile>
+	</PropertyGroup>
+
+	<!--Release-开源版-发布配置相关，调试符号和源码生成独立符号包（snupkg）-->
+	<PropertyGroup Condition="'$(IsPro)'!='True' And '$(Configuration)' == 'Release' And '$(IsSourceGenerator)'!='True'">
+		<DebugSymbols>True</DebugSymbols>
+		<DebugType>portable</DebugType>
+		<EmbedAllSources>True</EmbedAllSources>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+	</PropertyGroup>
+
+	<!--Debug-开源版-发布配置相关，此处不嵌入源码主要为了直接调试开发源码-->
+	<PropertyGroup Condition="'$(IsPro)'!='True' And '$(Configuration)' == 'Debug' And '$(IsSourceGenerator)'!='True'">
+		<DebugSymbols>True</DebugSymbols>
+		<DebugType>Embedded</DebugType>
+	</PropertyGroup>
+
+	<!--Release-专业版-发布配置相关-->
+	<PropertyGroup Condition="'$(IsPro)'=='True' And '$(Configuration)' == 'Release' And '$(IsSourceGenerator)'!='True'">
+	</PropertyGroup>
+
+	<!--Debug-专业版-发布配置相关，此处只嵌入调试符号，不嵌入源码主要为了直接调试开发源码-->
+	<PropertyGroup Condition="'$(IsPro)'=='True' And '$(Configuration)' == 'Debug' And '$(IsSourceGenerator)'!='True'">
+		<DebugSymbols>True</DebugSymbols>
+		<DebugType>Embedded</DebugType>
+	</PropertyGroup>
+
+	<Target Name="CopyNuGetPackage" AfterTargets="Pack">
+		<Copy SourceFiles="$(PackageOutputPath)\$(PackageId).$(PackageVersion).nupkg"
+              DestinationFolder="D:\Nuget\local"
+              Condition="Exists('D:\Nuget\local')" />
+	</Target>
+
+	<ItemGroup Condition="'$(IsSourceGenerator)'!='True'">
+		<PackageReference Include="CodeInject" Version="1.0.7">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="PolySharp" Version="1.15.0">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+	</ItemGroup>
+
+	<!--全局命名空间-->
+	<ItemGroup Condition="'$(IsSourceGenerator)'!='True'">
+		<Using Include="System" />
+		<Using Include="System.Collections.Generic" />
+		<Using Include="System.Linq" />
+		<Using Include="System.Threading" />
+		<Using Include="System.Threading.Tasks" />
+		<Using Include="System.Text" />
+		<Using Include="System.IO" />
+		<Using Include="TouchSocket.Core" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(Configuration)'=='Debug' And '$(IsSourceGenerator)'!='True'">
+		<InternalsVisibleTo Include="XUnitTestProject" />
+        <InternalsVisibleTo Include="TouchSocket.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Core.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Dmtp.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Http.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.JsonRpc.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Mcp.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Modbus.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Mqtt.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Mqtt.Rpc.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.NamedPipe.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Redis.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Rpc.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.Semi.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.SerialPorts.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.SocketIo.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.WebApi.Tests" />
+        <InternalsVisibleTo Include="TouchSocket.XmlRpc.Tests" />
+        <InternalsVisibleTo Include="TouchSocketPro.Dmtp.Tests" />
+        <InternalsVisibleTo Include="TouchSocketPro.Modbus.Tests" />
+        <InternalsVisibleTo Include="TouchSocketPro.PlcBridges.Tests" />
+        <InternalsVisibleTo Include="TouchSocketPro.S7.Tests" />
+        <InternalsVisibleTo Include="TouchSocketPro.SocketIo.Tests" />
+        <InternalsVisibleTo Include="TouchSocketPro.Ssh.Tests" />
+
+		<InternalsVisibleTo Include="SimpleTest" />
+		<InternalsVisibleTo Include="SimpleTest2" />
+	</ItemGroup>
+</Project>

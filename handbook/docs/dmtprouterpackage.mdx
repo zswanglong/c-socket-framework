@@ -1,0 +1,53 @@
+---
+id: dmtprouterpackage
+title: 路由包传输
+---
+
+import Tag from "@site/src/components/Tag.js";
+import Pro from "@site/src/components/Pro.js";
+import { TouchSocketProDmtpDefinition } from "@site/src/components/Definition.js";
+import CardLink from "@site/src/components/CardLink.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+
+<TouchSocketProDmtpDefinition />
+
+
+## 一、说明 <Pro/> 
+
+路由包传输模式是，手动版的Rpc，能够实现发送、然后同步等待响应式的通讯。但是与Rpc区别的是，路由包是自己把握数据序列化，可以完全使用内存池。极大的降低内存消耗。
+
+包模式的应用场景，就是中小型二进制数据的传输。例如：传输100张照片，每张大约5Mb的。
+
+用协议直接Send，怕对方没正确处理保存。没法拿到处理回执。
+
+用Rpc，发送得序列化，解析得反序列化，而且5Mb数据也用不了内存池。内存会抖动的厉害。
+
+用Rpc+Channel，又显得麻烦。
+
+所以用路由包传输模式。高效，简单。
+
+## 二、使用
+
+路由包传输模式是由DmtpRouterPackageFeature功能插件提供的，所以需要添加`UseDmtpRouterPackage`。
+
+<CustomCodeBlock region="路由包添加插件"/>
+
+其次，要完成路由包传输，就得自己定义请求包和响应包。此处简单定义两个包用于测试。具体关于包的打包、解包详细操作可以看[包序列化](./ipackage.mdx)
+
+<CustomCodeBlock region="路由包定义请求包"/>
+
+<CustomCodeBlock region="路由包定义响应包"/>
+
+【请求端】
+
+<CustomCodeBlock region="路由包请求端"/>
+
+【响应端】
+
+响应端除了`UseDmtpRouterPackage`之外，还需要添加一个插件，实现`IDmtpRouterPackagePlugin`功能，主要在里面实现响应的动作。
+
+<CustomCodeBlock region="路由包响应端插件"/>
+
+<CardLink link="examples/Dmtp/RouterPackageConsoleApp"/>

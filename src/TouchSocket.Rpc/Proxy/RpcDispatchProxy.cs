@@ -1,0 +1,138 @@
+﻿//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Diagnostics.CodeAnalysis;
+
+namespace TouchSocket.Rpc;
+
+/// <summary>
+/// RpcDispatchProxy
+/// </summary>
+[RequiresUnreferencedCode("动态代理不支持AOT环境")]
+public abstract class RpcDispatchProxy<TClient, TAttribute> : DispatchProxy where TClient : IRpcClient where TAttribute : RpcAttribute
+{
+    private readonly ConcurrentDictionary<MethodInfo, ProxyModel> m_methods = new ConcurrentDictionary<MethodInfo, ProxyModel>();
+    private readonly MethodInfo m_fromResultMethod;
+
+    /// <summary>
+    /// RpcDispatchProxy
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL3050:使用动态代码可能与修剪不兼容")]
+    public RpcDispatchProxy()
+    {
+        this.m_fromResultMethod = typeof(Task).GetMethod("FromResult");
+    }
+
+    /// <summary>
+    /// 获取调用Rpc的客户端。
+    /// </summary>
+    public abstract TClient GetClient();
+
+    /// <inheritdoc/>
+    protected sealed override object Invoke(MethodInfo targetMethod, object[] args)
+    {
+        var value = this.m_methods.GetOrAdd(targetMethod, this.AddMethod);
+        var rpcMethod = value.RpcMethod;
+        var invokeKey = value.InvokeKey;
+
+        InvokeOption invokeOption;
+
+        object[] ps;
+        if (value.InvokeOption)
+        {
+            invokeOption = (InvokeOption)args.Last();
+            var pslist = new List<object>();
+
+            for (var i = 0; i < args.Length; i++)
+            {
+                if (i < args.Length - 1)
+                {
+                    pslist.Add(args[i]);
+                }
+            }
+
+            ps = pslist.ToArray();
+        }
+        else
+        {
+            invokeOption = default;
+            ps = args;
+        }
+
+        this.OnBefore(targetMethod, value.InvokeKey, ref ps);
+
+        object result = default;
+
+        switch (rpcMethod.ReturnKind)
+        {
+            case MethodReturnKind.Awaitable:
+                {
+                    result = this.GetClient().InvokeAsync(invokeKey, rpcMethod.RealReturnType, invokeOption, ps);
+                    break;
+                }
+            case MethodReturnKind.AwaitableObject:
+                {
+                    result = this.GetClient().InvokeAsync(invokeKey, rpcMethod.RealReturnType, invokeOption, ps).GetFalseAwaitResult();
+                    result = value.GenericMethod.Invoke(default, result);
+                    break;
+                }
+            default:
+                {
+                    result = this.GetClient().InvokeAsync(invokeKey, rpcMethod.RealReturnType, invokeOption, ps).GetFalseAwaitResult();
+                    break;
+                }
+        }
+
+        this.OnAfter(targetMethod, invokeKey, ref args, ref result);
+
+        return result;
+    }
+
+
+    [UnconditionalSuppressMessage("Trimming", "IL3050:使用动态代码可能与修剪不兼容")]
+    private ProxyModel AddMethod(MethodInfo info)
+    {
+        var attribute = info.GetCustomAttribute<TAttribute>(true) ?? throw new Exception($"在方法{info.Name}中没有找到{typeof(TAttribute)}的特性。");
+        var rpcMethod = new RpcMethod(info);
+        var invokeKey = attribute.GetInvokeKey(rpcMethod);
+        var invokeOption = false;
+        if (info.GetParameters().Length > 0 && typeof(InvokeOption).IsAssignableFrom(info.GetParameters().Last().ParameterType))
+        {
+            invokeOption = true;
+        }
+        return new ProxyModel()
+        {
+            InvokeKey = invokeKey,
+            RpcMethod = rpcMethod,
+            InvokeOption = invokeOption,
+            GenericMethod = rpcMethod.ReturnKind == MethodReturnKind.AwaitableObject ? new Method(this.m_fromResultMethod.MakeGenericMethod(rpcMethod.RealReturnType)) : default
+        };
+    }
+
+    /// <summary>
+    /// 方法调用前
+    /// </summary>
+    protected virtual void OnBefore(MethodInfo method, string invokeKey, ref object[] args)
+    {
+
+    }
+
+    /// <summary>
+    /// 方法调用后
+    /// </summary>
+    protected virtual void OnAfter(MethodInfo method, string invokeKey, ref object[] args, ref object result)
+    {
+
+    }
+}

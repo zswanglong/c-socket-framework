@@ -1,0 +1,434 @@
+﻿//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.Diagnostics.CodeAnalysis;
+using TouchSocket.Resources;
+
+namespace TouchSocket.Dmtp.Redis;
+
+/// <summary>
+/// DmtpRedisActor 类，实现了 IDmtpRedisActor 接口。
+/// 该类通过 Redis 操作，为分布式消息传输协议（Dmtp）提供演员（Actor）模型的实现。
+/// </summary>
+internal sealed class DmtpRedisActor : DisposableObject, IDmtpRedisActor
+{
+    /// <summary>
+    /// 初始化DmtpRedisActor类的新实例。
+    /// </summary>
+    /// <param name="dmtpActor">一个IDmtpActor接口的实现，用于处理actor的具体逻辑。</param>
+    public DmtpRedisActor(IDmtpActor dmtpActor)
+    {
+        this.DmtpActor = dmtpActor;
+    }
+
+    /// <inheritdoc/>
+    public BytesSerializerConverter Converter { get; set; }
+
+    /// <inheritdoc/>
+    public IDmtpActor DmtpActor { get; }
+
+    /// <inheritdoc/>
+    public ICache<string, ReadOnlyMemory<byte>> ICache { get; set; }
+
+    /// <inheritdoc/>
+    public async Task<bool> AddAsync<TValue>(string key, TValue value, int duration, CancellationToken cancellationToken)
+    {
+        var cache = new CacheEntry<string, ReadOnlyMemory<byte>>(key)
+        {
+            Duration = TimeSpan.FromSeconds(duration)
+        };
+        if (value is not ReadOnlyMemory<byte>)
+        {
+            cache.Value = this.Converter.Serialize(null, value);
+        }
+        return await this.AddCacheAsync(cache, cancellationToken).ConfigureDefaultAwait();
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> AddCacheAsync(ICacheEntry<string, ReadOnlyMemory<byte>> entity, CancellationToken cancellationToken)
+    {
+        return !await this.ContainsCacheAsync(entity.Key, cancellationToken).ConfigureDefaultAwait() && await this.SetCacheAsync(entity, cancellationToken).ConfigureDefaultAwait();
+    }
+
+    /// <inheritdoc/>
+    public async Task ClearCacheAsync(CancellationToken cancellationToken)
+    {
+        var package = new RedisRequestWaitPackage
+        {
+            packageType = RedisPackageType.Clear
+        };
+
+        var waitData = this.DmtpActor.WaitHandlePool.GetWaitDataAsync(package);
+        try
+        {
+            using (var byteBlock = new ByteBlock(1024 * 64))
+            {
+                var block = byteBlock;
+                package.Package(ref block);
+                await this.DmtpActor.SendAsync(this.m_redis_Request, byteBlock.Memory).ConfigureDefaultAwait();
+            }
+            switch (await waitData.WaitAsync(cancellationToken).ConfigureDefaultAwait())
+            {
+                case WaitDataStatus.Success:
+                    {
+                        if (waitData.CompletedData.Status == 1)
+                        {
+                            return;
+                        }
+                        else
+                        {
+                            throw new Exception(waitData.CompletedData.Message);
+                        }
+                    }
+                case WaitDataStatus.Overtime: throw new TimeoutException(TouchSocketDmtpStatus.Overtime.GetDescription());
+                case WaitDataStatus.Canceled:
+                case WaitDataStatus.Default:
+                case WaitDataStatus.Disposed:
+                default:
+                    throw new Exception(TouchSocketDmtpStatus.UnknownError.GetDescription());
+            }
+        }
+        finally
+        {
+            waitData.Dispose();
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> ContainsCacheAsync(string key, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            throw new ArgumentException($"“{nameof(key)}”不能为 null 或空。", nameof(key));
+        }
+
+        var package = new RedisRequestWaitPackage
+        {
+            key = key,
+            packageType = RedisPackageType.Contains
+        };
+
+        var waitData = this.DmtpActor.WaitHandlePool.GetWaitDataAsync(package);
+        try
+        {
+            using (var byteBlock = new ByteBlock(1024 * 64))
+            {
+                var block = byteBlock;
+                package.Package(ref block);
+                await this.DmtpActor.SendAsync(this.m_redis_Request, byteBlock.Memory).ConfigureDefaultAwait();
+            }
+            switch (await waitData.WaitAsync(cancellationToken).ConfigureDefaultAwait())
+            {
+                case WaitDataStatus.Success:
+                    {
+                        return waitData.CompletedData.Status == 1
+                            ? true
+                            : waitData.CompletedData.Status == byte.MaxValue ? false : throw new Exception(waitData.CompletedData.Message);
+                    }
+                case WaitDataStatus.Overtime: throw new TimeoutException(TouchSocketDmtpStatus.Overtime.GetDescription());
+                case WaitDataStatus.Canceled:
+                case WaitDataStatus.Default:
+                case WaitDataStatus.Disposed:
+                default:
+                    throw new Exception(TouchSocketDmtpStatus.UnknownError.GetDescription());
+            }
+        }
+        finally
+        {
+            waitData.Dispose();
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<TValue> GetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] TValue>(string key, CancellationToken cancellationToken = default)
+    {
+        var cache = await this.GetCacheAsync(key, cancellationToken).ConfigureDefaultAwait();
+
+        if (cache != null)
+        {
+            if (cache.Value.IsEmpty)
+            {
+                return default;
+            }
+            if (cache.Value is TValue value1)
+            {
+                return value1;
+            }
+            var value = (TValue)this.Converter.Deserialize(null, cache.Value, typeof(TValue));
+            return value;
+        }
+        return default;
+    }
+
+    /// <inheritdoc/>
+    public async Task<ICacheEntry<string, ReadOnlyMemory<byte>>> GetCacheAsync(string key, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            throw new ArgumentException($"“{nameof(key)}”不能为 null 或空。", nameof(key));
+        }
+
+        var package = new RedisRequestWaitPackage()
+        {
+            key = key,
+            packageType = RedisPackageType.Get
+        };
+
+        var waitData = this.DmtpActor.WaitHandlePool.GetWaitDataAsync(package);
+        try
+        {
+            using (var byteBlock = new ByteBlock((package.value.Length) + 1024))
+            {
+                var block = byteBlock;
+                package.Package(ref block);
+                await this.DmtpActor.SendAsync(this.m_redis_Request, byteBlock.Memory).ConfigureDefaultAwait();
+            }
+            switch (await waitData.WaitAsync(cancellationToken).ConfigureDefaultAwait())
+            {
+                case WaitDataStatus.Success:
+                    {
+                        var responsePackage = (RedisResponseWaitPackage)waitData.CompletedData;
+                        return responsePackage.Status == 1
+                            ? new CacheEntry<string, ReadOnlyMemory<byte>>(key)
+                            {
+                                Value = responsePackage.value
+                            }
+                            : responsePackage.Status == byte.MaxValue ? new CacheEntry<string, ReadOnlyMemory<byte>>(key) : (ICacheEntry<string, ReadOnlyMemory<byte>>)default;
+                    }
+                case WaitDataStatus.Overtime: throw new TimeoutException(TouchSocketDmtpStatus.Overtime.GetDescription());
+                case WaitDataStatus.Canceled:
+                case WaitDataStatus.Default:
+                case WaitDataStatus.Disposed:
+                default:
+                    throw new TimeoutException(TouchSocketDmtpStatus.UnknownError.GetDescription());
+            }
+        }
+        finally
+        {
+            waitData.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 处理收到的消息
+    /// </summary>
+    /// <param name="message">接收到的消息对象</param>
+    /// <returns>返回一个异步任务，指示处理是否成功</returns>
+    public async Task<bool> InputReceivedData(DmtpMessage message)
+    {
+        if (message.ProtocolFlags == this.m_redis_Request)
+        {
+            var waitResult = new RedisResponseWaitPackage();
+            try
+            {
+                var package = new RedisRequestWaitPackage();
+                var reader = new BytesReader(message.Memory);
+                package.Unpackage(ref reader);
+                waitResult.Sign = package.Sign;
+
+                switch (package.packageType)
+                {
+                    case RedisPackageType.Set:
+                        {
+                            var success = this.ICache.SetCache(new CacheEntry<string, ReadOnlyMemory<byte>>(package.key)
+                            {
+                                Duration = package.timeSpan.Value,
+                                Value = package.value
+                            });
+                            waitResult.Status = success ? (byte)1 : byte.MaxValue;
+                            break;
+                        }
+                    case RedisPackageType.Get:
+                        {
+                            var cache = this.ICache.GetCache(package.key);
+                            if (cache != null)
+                            {
+                                waitResult.Status = 1;
+                                waitResult.value = cache.Value;
+                            }
+                            else
+                            {
+                                waitResult.Status = byte.MaxValue;
+                            }
+                        }
+                        break;
+
+                    case RedisPackageType.Contains:
+                        {
+                            waitResult.Status = this.ICache.ContainsCache(package.key) ? (byte)1 : byte.MaxValue;
+                        }
+                        break;
+
+                    case RedisPackageType.Remove:
+                        {
+                            waitResult.Status = this.ICache.RemoveCache(package.key) ? (byte)1 : byte.MaxValue;
+                        }
+                        break;
+
+                    case RedisPackageType.Clear:
+                        {
+                            this.ICache.ClearCache();
+                            waitResult.Status = 1;
+                        }
+                        break;
+
+                    default:
+                        return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                waitResult.Status = 2;
+                waitResult.Message = ex.Message;
+            }
+
+            using (var byteBlock = new ByteBlock(1024 * 64))
+            {
+                var block = byteBlock;
+                waitResult.Package(ref block);
+                await this.DmtpActor.SendAsync(this.m_redis_Response, byteBlock.Memory).ConfigureDefaultAwait();
+            }
+            return true;
+        }
+        else if (message.ProtocolFlags == this.m_redis_Response)
+        {
+            var waitResult = new RedisResponseWaitPackage();
+            var reader = new BytesReader(message.Memory);
+            waitResult.Unpackage(ref reader);
+            this.DmtpActor.WaitHandlePool.Set(waitResult);
+            return true;
+        }
+        return false;
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> RemoveCacheAsync(string key, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            throw new ArgumentException($"“{nameof(key)}”不能为 null 或空。", nameof(key));
+        }
+
+        var package = new RedisRequestWaitPackage
+        {
+            key = key,
+            packageType = RedisPackageType.Remove
+        };
+
+        var waitData = this.DmtpActor.WaitHandlePool.GetWaitDataAsync(package);
+        try
+        {
+            using (var byteBlock = new ByteBlock((package.value.Length) + 1024))
+            {
+                var block = byteBlock;
+                package.Package(ref block);
+                await this.DmtpActor.SendAsync(this.m_redis_Request, byteBlock.Memory, cancellationToken).ConfigureDefaultAwait();
+            }
+            switch (await waitData.WaitAsync(cancellationToken).ConfigureDefaultAwait())
+            {
+                case WaitDataStatus.Success:
+                    {
+                        return waitData.CompletedData.Status == 1
+                            ? true
+                            : waitData.CompletedData.Status == byte.MaxValue ? false : throw new Exception(waitData.CompletedData.Message);
+                    }
+                case WaitDataStatus.Overtime: throw new TimeoutException(Resources.TouchSocketDmtpStatus.Overtime.GetDescription());
+                case WaitDataStatus.Canceled: return false;
+                case WaitDataStatus.Default:
+                case WaitDataStatus.Disposed:
+                default:
+                    throw new TimeoutException(Resources.TouchSocketDmtpStatus.UnknownError.GetDescription());
+            }
+        }
+        finally
+        {
+            waitData.Dispose();
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> SetAsync<TValue>(string key, TValue value, int duration = 60000, CancellationToken cancellationToken = default)
+    {
+        var cache = new CacheEntry<string, ReadOnlyMemory<byte>>(key)
+        {
+            Duration = TimeSpan.FromSeconds(duration),
+            Value = value is ReadOnlyMemory<byte> bytes ? bytes : this.Converter.Serialize(null, value)
+        };
+        return await this.SetCacheAsync(cache, cancellationToken).ConfigureDefaultAwait();
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> SetCacheAsync(ICacheEntry<string, ReadOnlyMemory<byte>> cache, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(cache.Key))
+        {
+            throw new ArgumentException($"“{nameof(cache.Key)}”不能为 null 或空。", nameof(cache.Key));
+        }
+
+        if (cache is null)
+        {
+            throw new ArgumentNullException(nameof(cache));
+        }
+
+        var package = new RedisRequestWaitPackage
+        {
+            key = cache.Key,
+            timeSpan = cache.Duration,
+            value = cache.Value,
+            packageType = RedisPackageType.Set
+        };
+
+        var waitData = this.DmtpActor.WaitHandlePool.GetWaitDataAsync(package);
+        try
+        {
+            using (var byteBlock = new ByteBlock((package.value.Length) + 1024))
+            {
+                var block = byteBlock;
+                package.Package(ref block);
+                await this.DmtpActor.SendAsync(this.m_redis_Request, byteBlock.Memory).ConfigureDefaultAwait();
+            }
+            switch (await waitData.WaitAsync(cancellationToken).ConfigureDefaultAwait())
+            {
+                case WaitDataStatus.Success:
+                    {
+                        return waitData.CompletedData.Status == 1 || (waitData.CompletedData.Status == byte.MaxValue ? false : throw new Exception(waitData.CompletedData.Message));
+                    }
+                case WaitDataStatus.Overtime: throw new TimeoutException(Resources.TouchSocketDmtpStatus.Overtime.GetDescription());
+                case WaitDataStatus.Canceled: return false;
+                case WaitDataStatus.Default:
+                case WaitDataStatus.Disposed:
+                default:
+                    throw new TimeoutException(TouchSocketDmtpStatus.UnknownError.GetDescription());
+            }
+        }
+        finally
+        {
+            waitData.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 设置处理协议标识的起始标识。
+    /// </summary>
+    public void SetProtocolFlags(ushort start)
+    {
+        this.m_redis_Request = start++;
+        this.m_redis_Response = start++;
+    }
+
+    #region 字段
+
+    private ushort m_redis_Request;
+    private ushort m_redis_Response;
+
+    #endregion 字段
+}

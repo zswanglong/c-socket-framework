@@ -1,0 +1,447 @@
+//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using TouchSocket.Resources;
+
+namespace TouchSocket.NamedPipe;
+
+/// <summary>
+/// 命名管道服务器辅助客户端类
+/// </summary>
+[DebuggerDisplay("Id={Id},IP={IP},Port={Port}")]
+[CodeInject.RegionInject(FileName = "TcpClientBase.cs", RegionName = "ReceiveLoopAsync", Placeholders = new[] { "OnTcpReceiving", "OnNamedPipeReceiving" })]
+[CodeInject.RegionInject(FileName = "TcpClientBase.cs", RegionName = "内置常规数据发送", Placeholders = new[] { "OnTcpSending", "OnNamedPipeSending" })]
+public abstract partial class NamedPipeSessionClientBase : ResolverConfigObject, INamedPipeSession, INamedPipeListenableClient, IIdClient
+{
+    #region 字段
+
+    private TouchSocketConfig m_config;
+    private volatile SingleStreamDataHandlingAdapter m_dataHandlingAdapter;
+    private string m_id;
+    private NamedPipeListenOption m_listenOption;
+    private volatile bool m_online;
+    private IPluginManager m_pluginManager;
+    private Task m_runTask;
+    private IScopedResolver m_scopedResolver;
+    private INamedPipeServiceBase m_service;
+    private NamedPipeTransport m_transport;
+    private Func<NamedPipeSessionClientBase, bool> m_tryAddAction;
+    private TryOutEventHandler<NamedPipeSessionClientBase> m_tryGet;
+    private TryOutEventHandler<NamedPipeSessionClientBase> m_tryRemoveAction;
+    private int m_closeFlag;
+
+    #endregion 字段
+
+    /// <summary>
+    /// 命名管道服务器辅助客户端类
+    /// </summary>
+    protected NamedPipeSessionClientBase()
+    {
+        this.Protocol = Protocol.NamedPipe;
+    }
+
+    /// <inheritdoc/>
+    public CancellationToken ClosedToken => this.m_transport == null ? new CancellationToken(true) : this.m_transport.ClosedToken;
+
+    /// <inheritdoc/>
+    public override TouchSocketConfig Config => this.Service?.Config ?? this.m_config;
+
+    /// <inheritdoc/>
+    public SingleStreamDataHandlingAdapter DataHandlingAdapter => this.m_dataHandlingAdapter;
+
+    /// <inheritdoc/>
+    public string Id => this.m_id;
+
+    /// <inheritdoc/>
+    public bool IsClient => false;
+
+    /// <inheritdoc/>
+    public DateTimeOffset LastReceivedTime => this.m_transport?.ReceiveCounter.LastIncrement ?? default;
+
+    /// <inheritdoc/>
+    public DateTimeOffset LastSentTime => this.m_transport?.SendCounter.LastIncrement ?? default;
+
+    /// <inheritdoc/>
+    public NamedPipeListenOption ListenOption => this.m_listenOption;
+
+    /// <inheritdoc/>
+    public virtual bool Online => this.m_online;
+
+    /// <inheritdoc/>
+    public override IPluginManager PluginManager => this.m_pluginManager;
+
+    /// <inheritdoc/>
+    public Protocol Protocol { get; protected set; }
+
+    /// <inheritdoc/>
+    public override IResolver Resolver => this.m_scopedResolver.Resolver;
+
+    /// <inheritdoc/>
+    public INamedPipeServiceBase Service => this.m_service;
+
+    /// <summary>
+    /// 获取命名管道的底层传输层对象。
+    /// </summary>
+    protected ITransport Transport => this.m_transport;
+
+    #region Internal
+
+    internal async Task InternalConnected(NamedPipeTransport transport)
+    {
+        this.m_online = true;
+        Interlocked.Exchange(ref this.m_closeFlag, 0);
+        this.m_transport = transport;
+        this.m_runTask = this.RunSessionAsync(transport);
+        await this.m_runTask.ConfigureDefaultAwait();
+    }
+
+    internal async Task InternalConnecting(ConnectingEventArgs e)
+    {
+        await this.OnNamedPipeConnecting(e).ConfigureDefaultAwait();
+        if (this.m_dataHandlingAdapter == null)
+        {
+            var adapter = this.m_listenOption.Adapter?.Invoke();
+            if (adapter != null)
+            {
+                this.SetAdapter(adapter);
+            }
+        }
+    }
+
+    internal async Task InternalInitialized(TouchSocketConfig config, NamedPipeListenOption option, IResolver resolver, IPluginManager pluginManager, INamedPipeServiceBase serviceBase, Func<NamedPipeSessionClientBase, bool> tryAddAction, TryOutEventHandler<NamedPipeSessionClientBase> tryRemoveAction, TryOutEventHandler<NamedPipeSessionClientBase> tryGet)
+    {
+        this.m_config = config;
+        this.m_pluginManager = pluginManager;
+
+        this.m_listenOption = option;
+
+        this.m_scopedResolver = resolver.CreateScopedResolver();
+        this.Logger ??= this.m_scopedResolver.Resolver.Resolve<ILog>();
+
+        this.m_service = serviceBase;
+
+        this.m_tryAddAction = tryAddAction;
+        this.m_tryRemoveAction = tryRemoveAction;
+        this.m_tryGet = tryGet;
+        await this.OnInitialized().ConfigureDefaultAwait();
+    }
+
+    internal Task InternalNamedPipeConnected(NamedPipeTransport transport)
+    {
+        return this.InternalConnected(transport);
+    }
+
+    internal Task InternalNamedPipeConnecting(ConnectingEventArgs e)
+    {
+        return this.InternalConnecting(e);
+    }
+
+    internal void InternalSetId(string id)
+    {
+        ThrowHelper.ThrowArgumentNullExceptionIfStringIsNullOrEmpty(id, nameof(id));
+        this.m_id = id;
+    }
+
+    private async Task RunSessionAsync(NamedPipeTransport transport)
+    {
+        // 标记当前异步流程属于本会话，回调中调用关闭或重连时不再等待会话任务自身，避免死锁。
+        SessionRunContext.Enter(this);
+
+        try
+        {
+            await this.OnNamedPipeConnected(new ConnectedEventArgs()).SafeWaitAsync().ConfigureDefaultAwait();
+            await this.ReceiveLoopAsync(transport).ConfigureDefaultAwait();
+        }
+        catch (Exception ex)
+        {
+            this.Logger?.Debug(this, ex);
+        }
+        finally
+        {
+            transport.SafeDispose();
+
+            this.m_online = false;
+            var adapter = this.m_dataHandlingAdapter;
+            this.m_dataHandlingAdapter = default;
+            adapter.SafeDispose();
+
+            await this.OnNamedPipeClosed(transport.ClosedEventArgs).SafeWaitAsync().ConfigureDefaultAwait();
+            this.m_tryRemoveAction.Invoke(this.m_id, out _);
+        }
+    }
+
+    #endregion Internal
+
+    /// <inheritdoc/>
+    public virtual async Task<Result> CloseAsync(string msg, CancellationToken cancellationToken = default)
+    {
+        if (!this.m_online)
+        {
+            return Result.Success;
+        }
+
+        try
+        {
+            if (Interlocked.CompareExchange(ref this.m_closeFlag, 1, 0) != 0)
+            {
+                var waitTask = this.m_runTask;
+                if (waitTask != null && !SessionRunContext.IsInSession(this))
+                {
+                    await waitTask.WithCancellation(cancellationToken).ConfigureDefaultAwait();
+                }
+                return Result.Success;
+            }
+
+            var transport = this.m_transport;
+
+            // 先占用关闭原因：若远端断开等已先记录了原因，本次关闭不再视为主动关闭，不触发 Closing，保证 Closing 与 Closed 的原因一致。
+            if (transport == null || transport.TrySetClosedEventArgs(new ClosedEventArgs(msg)))
+            {
+                await this.PrivateOnNamedPipeClosing(new ClosingEventArgs(msg)).ConfigureDefaultAwait();
+            }
+
+            if (transport != null)
+            {
+                await transport.CloseAsync(msg, cancellationToken).ConfigureDefaultAwait();
+            }
+            var runTask = this.m_runTask;
+            if (runTask != null && !SessionRunContext.IsInSession(this))
+            {
+                await runTask.WithCancellation(cancellationToken).ConfigureDefaultAwait();
+            }
+            return Result.Success;
+        }
+        catch (Exception ex)
+        {
+            return Result.FromException(ex);
+        }
+    }
+
+    /// <inheritdoc/>
+    public virtual Task ResetIdAsync(string newId, CancellationToken cancellationToken = default)
+    {
+        return this.ProtectedResetIdAsync(newId);
+    }
+
+    /// <summary>
+    /// 当 Id 发生更改时触发。
+    /// </summary>
+    /// <param name="sourceId">原始 Id。</param>
+    /// <param name="targetId">目标 Id。</param>
+    /// <returns>表示异步操作的任务。</returns>
+    protected virtual async Task IdChanged(string sourceId, string targetId)
+    {
+        await this.PluginManager.RaiseIIdChangedPluginAsync(this.Resolver, this, new IdChangedEventArgs(sourceId, targetId)).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 处理已接收到的数据。
+    /// <para>根据不同的数据处理适配器，会传递不同的数据</para>
+    /// </summary>
+    protected virtual async Task OnNamedPipeReceived(ReceivedDataEventArgs e)
+    {
+        await this.PluginManager.RaiseINamedPipeReceivedPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 当收到原始数据
+    /// </summary>
+    /// <returns>如果返回<see langword="true"/>则表示数据已被处理，且不会再向下传递。</returns>
+    protected virtual ValueTask<bool> OnNamedPipeReceiving(IBytesReader reader)
+    {
+        // 将原始数据传递给所有相关的预处理插件，以进行初步的数据处理
+        return this.PluginManager.RaiseINamedPipeReceivingPluginAsync(this.Resolver, this, m_bytesReaderEventArgs.Reset(reader));
+    }
+
+    /// <summary>
+    /// 触发命名管道发送事件的异步方法。
+    /// </summary>
+    /// <param name="memory">待发送的字节内存。</param>
+    /// <returns>一个等待任务，结果指示发送操作是否成功。</returns>
+    protected virtual ValueTask<bool> OnNamedPipeSending(ReadOnlyMemory<byte> memory)
+    {
+        // 将发送事件委托给插件管理器处理，异步调用相关插件的发送逻辑
+        return this.PluginManager.RaiseINamedPipeSendingPluginAsync(this.Resolver, this, m_sendingEventArgs.Reset(memory));
+    }
+
+    /// <summary>
+    /// 直接重置内部Id。
+    /// </summary>
+    /// <param name="newId">新的Id值。</param>
+    protected async Task ProtectedResetIdAsync(string newId)
+    {
+        this.ThrowIfDisposed();
+
+        // 检查新Id是否为空或null
+        if (string.IsNullOrEmpty(newId))
+        {
+            throw new ArgumentException($"“{nameof(newId)}”不能为 null 或空。", nameof(newId));
+        }
+
+        // 如果新旧Id相同，则无需进行更改
+        if (this.Id == newId)
+        {
+            return;
+        }
+
+        // 保存当前Id
+        var sourceId = this.Id;
+
+        // 尝试从内部集合中移除当前Id
+        if (this.m_tryRemoveAction(this.Id, out var sessionClient))
+        {
+            // 更新Socket客户端的Id
+            sessionClient.m_id = newId;
+
+            // 尝试将更新后的Socket客户端添加回集合
+            if (this.m_tryAddAction(sessionClient))
+            {
+                // 如果插件管理器已启用，通知相关插件Id已更改
+                await this.IdChanged(sourceId, newId).ConfigureDefaultAwait();
+                return;
+            }
+            else
+            {
+                // 如果添加失败，恢复原来的Id
+                sessionClient.m_id = sourceId;
+
+                // 再次尝试添加，如果失败，则抛出异常
+                if (this.m_tryAddAction(sessionClient))
+                {
+                    ThrowHelper.ThrowException(TouchSocketResource.IdAlreadyExists.Format(newId));
+                }
+                else
+                {
+                    // 如果恢复旧Id也失败，则关闭Socket客户端
+                    await sessionClient.CloseAsync("修改新Id时操作失败，且回退旧Id时也失败。").ConfigureDefaultAwait();
+                }
+            }
+        }
+        else
+        {
+            // 如果无法找到对应的Socket客户端，则抛出异常
+            ThrowHelper.ThrowClientNotFindException(sourceId);
+        }
+    }
+
+    /// <summary>
+    /// 尝试通过Id获得对应的客户端
+    /// </summary>
+    /// <param name="id">客户端的唯一标识符</param>
+    /// <param name="sessionClient">输出参数，用于返回找到的客户端实例</param>
+    /// <returns>如果找到对应的客户端，则返回<see langword="true"/>；否则返回<see langword="false"/></returns>
+    protected bool ProtectedTryGetClient(string id, out NamedPipeSessionClientBase sessionClient)
+    {
+        // 调用内部方法尝试获取客户端
+        return this.m_tryGet(id, out sessionClient);
+    }
+
+    /// <inheritdoc/>
+    protected override void SafetyDispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _ = EasyTask.SafeRun(async () => await this.CloseAsync(TouchSocketResource.DisposeClose).ConfigureDefaultAwait());
+        }
+        base.SafetyDispose(disposing);
+    }
+
+    /// <summary>
+    /// 设置适配器
+    /// </summary>
+    /// <param name="adapter">要设置的适配器实例</param>
+    protected void SetAdapter(SingleStreamDataHandlingAdapter adapter)
+    {
+        this.ThrowIfDisposed();
+
+        if (adapter is null)
+        {
+            this.m_dataHandlingAdapter = null;//允许Null赋值
+            return;
+        }
+
+        // 检查当前实例是否已有配置
+        if (this.Config != null)
+        {
+            // 如果有配置，则将其应用到适配器上
+            adapter.Config(this.Config);
+        }
+
+        adapter.OnLoaded(this);
+
+        adapter.ReceivedAsyncCallBack = this.PrivateHandleReceivedData;
+        this.m_dataHandlingAdapter = adapter;
+    }
+
+    private async Task PrivateHandleReceivedData(ReadOnlyMemory<byte> memory, IRequestInfo requestInfo)
+    {
+        await this.OnNamedPipeReceived(m_receivedDataEventArgs.Reset(memory, requestInfo)).ConfigureDefaultAwait();
+    }
+
+    #region 事件&委托
+
+    private readonly BytesReaderEventArgs m_bytesReaderEventArgs = new BytesReaderEventArgs();
+
+    private readonly ReceivedDataEventArgs m_receivedDataEventArgs = new ReceivedDataEventArgs();
+
+    private readonly SendingEventArgs m_sendingEventArgs = new SendingEventArgs();
+
+    /// <summary>
+    /// 当初始化完成时，执行在<see cref="OnNamedPipeConnecting(ConnectingEventArgs)"/>之前。
+    /// </summary>
+    protected virtual Task OnInitialized()
+    {
+        return EasyTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 客户端已断开连接。
+    /// </summary>
+    protected virtual async Task OnNamedPipeClosed(ClosedEventArgs e)
+    {
+        await this.PluginManager.RaiseINamedPipeClosedPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 即将断开连接(仅主动断开时有效)。
+    /// </summary>
+    protected virtual async Task OnNamedPipeClosing(ClosingEventArgs e)
+    {
+        await this.PluginManager.RaiseINamedPipeClosingPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 当客户端完整建立连接。
+    /// </summary>
+    protected virtual async Task OnNamedPipeConnected(ConnectedEventArgs e)
+    {
+        await this.PluginManager.RaiseINamedPipeConnectedPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    /// <summary>
+    /// 客户端正在连接。
+    /// </summary>
+    protected virtual async Task OnNamedPipeConnecting(ConnectingEventArgs e)
+    {
+        await this.PluginManager.RaiseINamedPipeConnectingPluginAsync(this.Resolver, this, e).ConfigureDefaultAwait();
+    }
+
+    private Task PrivateOnNamedPipeClosing(ClosingEventArgs e)
+    {
+        return this.OnNamedPipeClosing(e);
+    }
+
+    #endregion 事件&委托
+
+}

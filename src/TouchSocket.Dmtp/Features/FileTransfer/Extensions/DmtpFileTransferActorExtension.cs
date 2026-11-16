@@ -1,0 +1,324 @@
+//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.Collections.Concurrent;
+using TouchSocket.Resources;
+
+namespace TouchSocket.Dmtp.FileTransfer;
+
+/// <summary>
+/// 定义一个静态类，用于扩展Dmtp文件传输的功能
+/// </summary>
+public static class DmtpFileTransferActorExtension
+{
+    #region DependencyProperty
+
+    ///// <summary>
+    ///// DmtpFileTransferActor
+    ///// </summary>
+    //public static readonly DependencyProperty<IDmtpFileTransferActor> DmtpFileTransferActorProperty =
+    //    new("DmtpFileTransferActor", default);
+
+    #endregion DependencyProperty
+
+    /// <summary>
+    /// 从<see cref="DmtpActor"/>中获取<see cref="IDmtpFileTransferActor"/>
+    /// </summary>
+    /// <param name="dmtpActor">要从中获取文件传输演员的<see cref="IDmtpActor"/>实例。</param>
+    /// <returns>返回一个<see cref="IDmtpFileTransferActor"/>实例。</returns>
+    public static IDmtpFileTransferActor GetDmtpFileTransferActor(this IDmtpActor dmtpActor)
+    {
+        return dmtpActor.GetActor<DmtpFileTransferActor>();
+    }
+
+    /// <summary>
+    /// 从<see cref="IDmtpActorObject"/>中获取能实现文件传输的<see cref="IDmtpFileTransferActor"/>
+    /// </summary>
+    /// <param name="client">实现文件传输功能的对象</param>
+    /// <returns>返回一个可进行文件传输的演员对象</returns>
+    /// <exception cref="ArgumentNullException">如果内部演员对象为空，则抛出此异常</exception>
+    public static IDmtpFileTransferActor GetDmtpFileTransferActor(this IDmtpActorObject client)
+    {
+        var actor = client.DmtpActor.GetDmtpFileTransferActor();
+        ThrowHelper.ThrowIfNull(actor, nameof(actor), TouchSocketDmtpResource.DmtpFileTransferActorNull);
+        return actor;
+    }
+
+    #region Id文件传输
+    /// <summary>
+    /// 异步拉取文件
+    /// </summary>
+    /// <param name="actor">文件传输行为者</param>
+    /// <param name="targetId">目标ID，标识需要拉取的文件</param>
+    /// <param name="fileOperator">文件操作器，用于处理文件操作</param>
+    /// <returns>返回一个异步任务，包含操作结果</returns>
+    /// <remarks>
+    /// 该方法为文件传输行为者提供了一种异步拉取文件的方式，通过指定目标ID和文件操作器来完成文件的拉取操作。
+    /// </remarks>
+    public static async Task<Result> PullFileAsync(this IDmtpFileTransferActor actor, string targetId, FileOperator fileOperator)
+    {
+        if (fileOperator is null)
+        {
+            return fileOperator.SetResult(new Result(ResultCode.Error, TouchSocketCoreResource.ArgumentIsNull.Format(nameof(fileOperator))));
+        }
+        if (fileOperator.IsEnd)
+        {
+            fileOperator.SetResult(Result.Default);
+        }
+
+        try
+        {
+            var resourceInfoResult = await actor.PullFileResourceInfoAsync(targetId, fileOperator.ResourcePath, fileOperator.Metadata, fileOperator.FileSectionSize, fileOperator.Token).ConfigureDefaultAwait();
+            if (!resourceInfoResult.IsSuccess)
+            {
+                return fileOperator.SetResult(new Result(resourceInfoResult.ResultCode, resourceInfoResult.Message));
+            }
+            var resourceInfo = resourceInfoResult.FileResourceInfo;
+            if (fileOperator.ResourceInfo == null)
+            {
+                fileOperator.ResourceInfo = resourceInfo;
+            }
+            else
+            {
+                fileOperator.ResourceInfo.ResetResourceHandle(resourceInfo.ResourceHandle);
+            }
+
+            fileOperator.SetLength(resourceInfo.FileInfo.Length);
+
+            var locator = new FileResourceLocator(fileOperator.ResourceInfo, actor.FileController.GetFullPath(actor.RootPath, fileOperator.SavePath));
+            var sections = new ConcurrentStack<FileSection>();
+
+            var fileSections = locator.FileResourceInfo.FileSections;
+
+            for (var i = fileSections.Length - 1; i >= 0; i--)
+            {
+                var fileSection = fileSections[i];
+                if (fileSection.Status != FileSectionStatus.Finished)
+                {
+                    sections.Push(fileSection);
+                }
+                else
+                {
+                    fileOperator.AddCompletedLength(fileSection.Length);
+                }
+            }
+
+            var failResult = Result.UnknownFail;
+            await EasyTask.SafeRun(async () =>
+             {
+                 var failed = 0;
+                 while (true)
+                 {
+                     if (failed > fileOperator.TryCount)
+                     {
+                         break;
+                     }
+                     if (!sections.TryPop(out var fileSection))
+                     {
+                         break;
+                     }
+                     try
+                     {
+                         using (var result = await actor.PullFileSectionAsync(targetId, fileSection, fileOperator.Token).ConfigureDefaultAwait())
+                         {
+                             if (result.IsSuccess)
+                             {
+                                 for (var j = 0; j < fileOperator.TryCount; j++)
+                                 {
+                                     var res = locator.WriteFileSection(result);
+                                     if (res.IsSuccess)
+                                     {
+                                         await fileOperator.AddFlowAsync(fileSection.Length).ConfigureDefaultAwait();
+                                         failed = 0;
+                                         break;
+                                     }
+                                 }
+                             }
+                             else
+                             {
+                                 failResult = new Result(result.ResultCode, result.Message);
+                                 if (result.ResultCode == ResultCode.Canceled)
+                                 {
+                                     return;
+                                 }
+                                 failed++;
+                                 sections.Push(fileSection);
+                                 await Task.Delay(500).ConfigureDefaultAwait();
+                             }
+                         }
+                     }
+                     catch (Exception ex)
+                     {
+                         failed++;
+                         failResult = new Result(ex);
+                         await Task.Delay(500).ConfigureDefaultAwait();
+                     }
+                 }
+             }).ConfigureDefaultAwait();
+            if (fileOperator.Token.IsCancellationRequested)
+            {
+                if (actor.DmtpActor.Online)
+                {
+                    await actor.FinishedFileResourceInfoAsync(targetId, resourceInfo, ResultCode.Canceled, fileOperator.Metadata, fileOperator.Token).ConfigureDefaultAwait();
+                }
+                return fileOperator.SetResult(Result.Canceled);
+            }
+            var result1 = locator.TryFinished();
+            if (actor.DmtpActor.Online)
+            {
+                await actor.FinishedFileResourceInfoAsync(targetId, resourceInfo, ResultCode.Success, fileOperator.Metadata, fileOperator.Token).ConfigureDefaultAwait();
+            }
+
+            return result1.IsSuccess ? fileOperator.SetResult(Result.Success) : fileOperator.SetResult(failResult);
+        }
+        catch (Exception ex)
+        {
+            return fileOperator.SetResult(new Result(ex));
+        }
+    }
+
+    /// <summary>
+    /// 异步推送文件到指定目标。
+    /// </summary>
+    /// <param name="actor">参与文件传输的行为者。</param>
+    /// <param name="targetId">目标设备的唯一标识符。</param>
+    /// <param name="fileOperator">用于操作文件的对象。</param>
+    /// <returns>返回一个异步任务，该任务完成后会提供推送操作的结果。</returns>
+    public static async Task<Result> PushFileAsync(this IDmtpFileTransferActor actor, string targetId, FileOperator fileOperator)
+    {
+        if (fileOperator is null)
+        {
+            return fileOperator.SetResult(new Result(ResultCode.Error, TouchSocketCoreResource.ArgumentIsNull.Format(nameof(fileOperator))));
+        }
+        if (fileOperator.IsEnd)
+        {
+            fileOperator.SetResult(Result.Default);
+        }
+
+        try
+        {
+            fileOperator.ResourceInfo ??= new FileResourceInfo(actor.FileController.GetFullPath(actor.RootPath, fileOperator.ResourcePath), fileOperator.FileSectionSize);
+
+            fileOperator.SetLength(fileOperator.ResourceInfo.FileInfo.Length);
+
+            using var locator = new FileResourceLocator(fileOperator.ResourceInfo);
+            var resultInfo = await actor.PushFileResourceInfoAsync(targetId, fileOperator.SavePath, locator, fileOperator.Metadata, fileOperator.Token);
+            if (!resultInfo.IsSuccess)
+            {
+                return fileOperator.SetResult(resultInfo);
+            }
+            var sections = new ConcurrentStack<FileSection>();
+
+            var fileSections = locator.FileResourceInfo.FileSections;
+
+            for (var i = fileSections.Length - 1; i >= 0; i--)
+            {
+                var fileSection = fileSections[i];
+                if (fileSection.Status != FileSectionStatus.Finished)
+                {
+                    sections.Push(fileSection);
+                }
+                else
+                {
+                    fileOperator.AddCompletedLength(fileSection.Length);
+                }
+            }
+
+            var failResult = Result.UnknownFail;
+            await EasyTask.SafeRun(async () =>
+            {
+                var failed = 0;
+                while (true)
+                {
+                    if (failed > fileOperator.TryCount)
+                    {
+                        break;
+                    }
+                    if (!sections.TryPop(out var fileSection))
+                    {
+                        break;
+                    }
+                    try
+                    {
+                        var result = await actor.PushFileSectionAsync(targetId, locator, fileSection, fileOperator.Token);
+                        if (result.IsSuccess)
+                        {
+                            await fileOperator.AddFlowAsync(fileSection.Length);
+                        }
+                        else
+                        {
+                            failResult = new Result(result.ResultCode, result.Message);
+                            if (result.ResultCode == ResultCode.Canceled)
+                            {
+                                return;
+                            }
+                            failed++;
+                            sections.Push(fileSection);
+                            await Task.Delay(500);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        failResult = new Result(ex);
+                        await Task.Delay(500);
+                    }
+                }
+            });
+
+            if (fileOperator.Token.IsCancellationRequested)
+            {
+                await actor.FinishedFileResourceInfoAsync(targetId, fileOperator.ResourceInfo, ResultCode.Canceled, fileOperator.Metadata, fileOperator.Token);
+                return fileOperator.SetResult(Result.Canceled);
+            }
+            else
+            {
+                var res = await actor.FinishedFileResourceInfoAsync(targetId, fileOperator.ResourceInfo, ResultCode.Success, fileOperator.Metadata, fileOperator.Token);
+                return fileOperator.SetResult(new Result(res.ResultCode, res.Message));
+            }
+        }
+        catch (Exception ex)
+        {
+            return fileOperator.SetResult(new Result(ex));
+        }
+    }
+
+    #endregion Id文件传输
+
+    #region 文件传输
+
+    /// <summary>
+    /// 异步拉取文件
+    /// </summary>
+    /// <param name="actor">文件传输行为者</param>
+    /// <param name="fileOperator">文件操作对象，用于处理文件操作</param>
+    /// <returns>返回一个异步任务，任务完成后返回操作结果</returns>
+    public static Task<Result> PullFileAsync(this IDmtpFileTransferActor actor, FileOperator fileOperator)
+    {
+        // 调用重载的PullFileAsync方法，使用默认值进行异步文件拉取操作
+        return PullFileAsync(actor, default, fileOperator);
+    }
+
+    /// <summary>
+    /// 异步推送文件方法
+    /// </summary>
+    /// <param name="actor">文件传输行为者</param>
+    /// <param name="fileOperator">文件操作器，用于处理文件操作</param>
+    /// <returns>返回一个异步任务，该任务表示文件推送操作的结果</returns>
+    public static Task<Result> PushFileAsync(this IDmtpFileTransferActor actor, FileOperator fileOperator)
+    {
+        // 调用重载的PushFileAsync方法，使用默认值进行文件推送
+        return PushFileAsync(actor, default, fileOperator);
+    }
+
+    #endregion 文件传输
+}

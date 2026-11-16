@@ -1,0 +1,140 @@
+//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.Diagnostics.CodeAnalysis;
+using TouchSocket.Http;
+using TouchSocket.Rpc;
+using TouchSocket.Sockets;
+
+namespace TouchSocket.WebApi;
+
+/// <summary>
+/// WebApi客户端
+/// </summary>
+public class WebApiClient : HttpClientBase, IWebApiClient
+{
+    /// <summary>
+    /// 构造函数
+    /// </summary>
+    public WebApiClient()
+    {
+        this.Converter = new StringSerializerConverter<HttpRequest>(
+            new StringToPrimitiveSerializerFormatter<HttpRequest>(),
+            new SystemTextJsonStringToClassSerializerFormatter<HttpRequest>());
+    }
+
+    private readonly SemaphoreSlim m_semaphoreSlim = new SemaphoreSlim(1, 1);
+
+    /// <summary>
+    /// 字符串转化器
+    /// </summary>
+    public StringSerializerConverter<HttpRequest> Converter { get; }
+
+    /// <inheritdoc/>
+    public async Task ConnectAsync(CancellationToken cancellationToken)
+    {
+        await this.m_semaphoreSlim.WaitAsync(cancellationToken).ConfigureDefaultAwait();
+        try
+        {
+            await base.HttpConnectAsync(cancellationToken).ConfigureDefaultAwait();
+        }
+        finally
+        {
+            this.m_semaphoreSlim.Release();
+        }
+    }
+
+    #region Rpc调用
+
+    /// <inheritdoc/>
+    [UnconditionalSuppressMessage("Trimming", "IL2067", Justification = "WebApi基础设施相信动态代码是有效的")]
+    public async Task<object> InvokeAsync(string invokeKey, Type returnType, InvokeOption invokeOption, params object[] parameters)
+    {
+        if (parameters.Length != 1 || parameters[0] is not WebApiRequest webApiRequest)
+        {
+            throw new Exception("参数不正确");
+        }
+
+        var request = new HttpRequest();
+        request.URL = invokeKey;
+        request.Method = webApiRequest.Method;
+        request.InitHeaders();
+        if (webApiRequest.Headers != null)
+        {
+            foreach (var item in webApiRequest.Headers)
+            {
+                request.Headers.TryAdd(item.Key, item.Value);
+            }
+        }
+        if (webApiRequest.Querys != null)
+        {
+            foreach (var item in webApiRequest.Querys)
+            {
+                request.Query.TryAdd(item.Key, item.Value);
+            }
+        }
+        request.SetHost(this.RemoteIPHost.Host);
+
+        if (webApiRequest.Body != null)
+        {
+            request.SetContent(this.Converter.Serialize(request, webApiRequest.Body));
+        }
+        else if (webApiRequest.Forms != null)
+        {
+            request.SetFormUrlEncodedContent(webApiRequest.Forms);
+        }
+
+        invokeOption ??= InvokeOption.WaitInvoke;
+
+        await this.PluginManager.RaiseIWebApiRequestPluginAsync(this.Resolver, this, new WebApiEventArgs(request, default));
+
+        using (var responseResult = await this.ProtectedRequestAsync(request, invokeOption.Token).ConfigureDefaultAwait())
+        {
+            var response = responseResult.Response;
+            await this.PluginManager.RaiseIWebApiResponsePluginAsync(this.Resolver, this, new WebApiEventArgs(request, response));
+
+            if (invokeOption.FeedbackType != FeedbackType.WaitInvoke)
+            {
+                return default;
+            }
+
+            if (response.StatusCode == 200)
+            {
+                if (returnType != null)
+                {
+                    var body = await response.GetBodyAsync().ConfigureDefaultAwait();
+                    return this.Converter.Deserialize(request, body, returnType);
+                }
+                else
+                {
+                    return default;
+                }
+
+            }
+            else if (response.StatusCode == 422)
+            {
+                throw new RpcException(((ActionResult)this.Converter.Deserialize(request, await response.GetBodyAsync().ConfigureDefaultAwait(), typeof(ActionResult))).Message);
+            }
+            else
+            {
+                throw new RpcException(response.StatusMessage);
+            }
+        }
+    }
+    #endregion Rpc调用
+
+    /// <inheritdoc/>
+    protected override Task OnTcpClosed(ClosedEventArgs e)
+    {
+        return base.OnTcpClosed(e);
+    }
+}

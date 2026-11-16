@@ -1,0 +1,200 @@
+---
+id: udpsession
+title: 创建UdpSession
+---
+
+import Tag from "@site/src/components/Tag.js";
+import CardLink from "@site/src/components/CardLink.js";
+import { TouchSocketDefinition } from "@site/src/components/Definition.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+
+<TouchSocketDefinition />
+
+
+## 一、说明
+
+UDP组件是基于UDP协议的最基础组件，其功能简单，易用。它既能充当服务器，又能够作为客户端。
+
+## 二、产品特点
+
+- 简单易用。
+- 多线程重叠IO。
+- 内存池
+- 高性能
+- 支持组播、广播
+- 支持插件扩展
+- 支持跨平台
+
+## 三、产品应用场景
+
+- UDP基础使用场景：可跨平台、跨语言使用。
+
+## 四、支持插件接口
+
+|  插件方法| 功能 |
+| --- | --- |
+| IUdpReceivedPlugin | 在收到数据时触发 |
+
+## 五、使用UdpSession
+
+### 5.1 作为服务器使用
+
+<CustomCodeBlock region="UdpSession作为服务器使用"/>
+
+### 5.2 作为客户端使用
+
+<CustomCodeBlock region="UdpSession作为客户端使用"/>
+
+:::caution 注意
+
+1. 即使不监听地址，Setup和Start都是必须要的。
+2. 当udp作为客户端时，Config如果不设置SetBindIPHost，将不会接收，如果不知道绑定那个端口，可以直接绑定0端口(或者使用UseUdpReceive)，这样，就会使用系统空闲的一个端口了。
+
+:::  
+
+## 六、发送数据
+
+框架内置很多发送发送。但是大致可分为两种。一种是带参数`EndPoint`，和一种不带的。
+
+### 6.1 发送到指定地址
+
+带`EndPoint`，即表示可以发送到任意终结点。
+
+```csharp showLineNumbers
+public virtual void SendAsync(EndPoint remoteEP, byte[] buffer, int offset, int length)
+```
+
+### 6.2 发送到接收数据的地址
+
+一般的，当udp收到数据时，都能获取到`UdpReceivedDataEventArgs`参数。然后通过该参数，能获取到接收数据的`EndPoint`。然后向这个终结点发送数据。发送方就能收到数据。
+
+例如：
+
+<CustomCodeBlock region="UdpSession发送到接收数据的地址"/>
+
+### 6.3 发送到默认地址
+
+不带`EndPoint`，即表示直接发送到默认（通过`SetRemoteIPHost`设置）的终结点。这一般在Udp作为客户端时是有用的。
+
+```csharp showLineNumbers
+public virtual void SendAsync(byte[] buffer, int offset, int length)
+```
+
+
+
+## 七、接收数据
+
+### 7.1 委托接收
+
+委托接收，则是直接订阅Received即可。
+
+<CustomCodeBlock region="UdpSession委托接收"/>
+
+### 7.2 插件接收 <Tag>推荐</Tag>
+
+使用插件接收，可以很好的分离业务。
+
+声明插件
+
+<CustomCodeBlock region="UdpSession插件接收声明插件1"/>
+
+<CustomCodeBlock region="UdpSession插件接收声明插件2"/>
+
+使用插件
+
+<CustomCodeBlock region="UdpSession插件接收使用插件"/>
+
+## 八、组播和广播
+
+### 8.1 说明
+
+- **广播BroadCast**：主机之间"一对所有"的通讯模式，广播者可以向网络中所有主机发送信息。广播禁止在Internet宽带网上传输（广播风暴）。
+- **多播MultiCast**：主机之间"一对一组"的通讯模式，也就是加入了同一个组的主机可以接受到此组内的所有数据。
+
+### 8.2 组播使用
+
+组播使用非常简单：
+
+1. 配置中启用广播 **SetEnableBroadcast** （重要）
+2. 在UdpSession **启动** 后，调用 **JoinMulticastGroup** 即可加入组播。调用 **DropMulticastGroup** 退出组播。
+
+#### 8.2.1 创建组播服务器
+
+<CustomCodeBlock region="UdpSession创建组播服务器"/>
+
+#### 8.2.2 发送组播数据
+
+<CustomCodeBlock region="UdpSession发送组播数据"/>
+
+### 8.3 广播使用
+
+广播使用非常简单：
+
+1. 配置中启用广播 **SetEnableBroadcast** （重要）
+
+#### 8.3.1 创建广播服务器
+
+广播接收时，是不需要加入组播组的。
+
+<CustomCodeBlock region="UdpSession创建广播服务器"/>
+
+#### 8.3.2 发送广播数据
+
+<CustomCodeBlock region="UdpSession发送广播数据"/>
+
+:::caution 注意
+
+在发送广播数据时，发送端配置 SetEnableBroadcast 是必须的。
+
+:::
+
+## 九、传输大于64K的数据
+
+### 9.1 说明
+
+UDP由于自身限制，每次发送的数据包最大约64K，但是在局域网内，有时候希望传输更大的数据。所以必须有策略发送。
+
+TouchSocket可通过简单设置，实现该功能。
+
+### 9.2 使用
+
+只需要在配置中，设置其适配器为 **UdpPackageAdapter** 类型即可（默认为 **NormalUdpDataHandlingAdapter**）。同时可以根据传输数据的大小，修改相关属性，如：**MTU**，**Timeout** 等。
+
+<CustomCodeBlock region="UdpSession传输大于64K的数据"/>
+
+:::caution 注意
+
+**此模式下，发送端与接收端均必须为TouchSocket（或实现相同算法），且为相同设置。**
+
+:::
+
+### 9.3 原理
+
+在发送时，会将要发送的数据分割成MTU长度的数据。然后为其编号，然后发送，最后由接收方重组。
+
+#### 9.3.1 数据格式
+
+**ID：由雪花算法生成，在并发请求时1毫秒中有400w分之一的概率发生ID重复。但基本可以忽略不计。**
+
+| Bit | 说明 | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 协议名 |  |  |  |  |  |  |  |  |  |
+| byte1 | PackageID为long类型，占用8字节，标识数据包唯一性。 |  |  |  |  |  |  |  |  |
+| byte2 |  |  |  |  |  |  |  |  |  |
+| byte3 |  |  |  |  |  |  |  |  |  |
+| byte4 |  |  |  |  |  |  |  |  |  |
+| byte5 |  |  |  |  |  |  |  |  |  |
+| byte6 |  |  |  |  |  |  |  |  |  |
+| byte7 |  |  |  |  |  |  |  |  |  |
+| byte8 | SN为Ushort占2字节，标识帧序 |  |  |  |  |  |  |  |  |
+| byte9 |  |  |  |  |  |  |  |  |  |
+| byte10 | flag，占1字节，最高位标识是否为结束，其他位保留。 | 1 |  |  |  |  |  |  |  |
+| byte？ | 有效载荷数据 |  |  |  |  |  |  |  |  |
+| byte^2 | 当不为终结帧时，此处仍然为载荷数据。当是终结帧时，倒数两个字节为Crc16校验。 |  |  |  |  |  |  |  |  |
+| byte^1 |  |  |  |  |  |  |  |  |  |
+
+## 十、本文示例Demo
+
+<CardLink link="examples/Udp/UdpDemoApp"/>

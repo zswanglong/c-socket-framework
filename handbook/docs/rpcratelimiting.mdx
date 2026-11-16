@@ -1,0 +1,113 @@
+---
+id: rpcratelimiting
+title: Rpc访问速率限制
+---
+
+import { TouchSocketRpcRateLimitingDefinition } from "@site/src/components/Definition.js";
+import BilibiliCard from '@site/src/components/BilibiliCard.js';
+import CardLink from "@site/src/components/CardLink.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+<TouchSocketRpcRateLimitingDefinition />
+
+
+## 一、说明
+
+速率限制是指限制一个资源的访问量的概念。例如，你知道你的应用程序访问的数据库可以安全地处理每分钟1000个请求，但你不相信它可以处理比这多得多的请求。你可以在你的应用程序中放置一个速率限制器，允许每分钟有1000个请求，并在访问数据库之前拒绝任何更多的请求。因此，速率限制你的数据库，允许你的应用程序处理安全数量的请求，而不可能有来自你的数据库的不良故障。
+
+有多种不同的速率限制算法来控制请求的流量。我们将讨论其中的4种，他们分别为：
+
+- 固定窗口
+- 滑动窗口
+- 令牌桶
+- 并发
+
+## 二、使用
+
+:::tip 提示
+
+本文所有示例代码均可在示例工程中找到。
+
+:::
+
+<CardLink link="examples/Rpc/RpcRateLimitingConsoleApp"/>
+
+### 2.1 安装
+
+使用 NuGet 安装 TouchSocket.Rpc.RateLimiting 包。
+
+```bash showLineNumbers
+Install-Package TouchSocket.Rpc.RateLimiting
+```
+
+### 2.2 固定窗口限制器
+
+`AddFixedWindowLimiter` 方法使用固定的时间窗口来限制请求。当时间窗口过期时，会启动一个新的时间窗口，并重置请求限制。
+
+<CustomCodeBlock region="Rpc限流添加固定窗口限制器"/>
+
+### 2.3 滑动窗口限制器
+
+`AddSlidingWindowLimiter` 方法使用滑动的时间窗口来限制请求。当时间窗口过期时，会启动一个新的时间窗口，与固定窗口限制器类似，但为每个窗口添加了段。窗口在每个段间隔滑动一段。段间隔的计算方式是：(窗口时间)/(每个窗口的段数)。
+
+<CustomCodeBlock region="Rpc限流添加滑动窗口限制器"/>
+
+### 2.4 令牌桶限制器
+
+`AddTokenBucketLimiter` 方法使用令牌桶来限制请求。令牌桶限制器将根据指定的令牌生成速率向桶中添加令牌。如果桶中有足够的令牌，则允许请求，否则拒绝请求。
+
+<CustomCodeBlock region="Rpc限流添加令牌桶限制器"/>
+
+### 2.5 并发限制器
+
+并发限制器会限制并发请求数。每添加一个请求，在并发限制中减去 1。一个请求完成时，在限制中增加 1。其他请求限制器限制的是指定时间段的请求总数，而与它们不同，并发限制器仅限制并发请求数，不对一段时间内的请求数设置上限。
+
+<CustomCodeBlock region="Rpc限流添加并发限制器"/>
+
+### 2.6 使用限流器
+
+限流器使用很简单，只需要在需要限流的函数、服务或接口上添加 `[EnableRateLimiting]` 特性即可。
+
+<CustomCodeBlock region="Rpc限流使用特性"/>
+
+## 三、限流算法说明
+
+TouchSocket 的限流算法完全引用 `System.Threading.RateLimiting.dll`，算法实现比较通用且经过充分验证。
+
+同时，算法的使用方法也完全借鉴 ASP.NET Core 的限流算法使用方法，保持了一致的开发体验。
+
+如需深入了解具体算法原理和更多配置选项，请参考微软官方文档：[ASP.NET Core 中的速率限制](https://learn.microsoft.com/zh-cn/aspnet/core/performance/rate-limit)。
+
+
+## 四、自定义限流分区键
+
+上述限流器的默认工作分区键都是基于函数的。例如，对于 `MyRpcServer` 的 `Login` 函数，分区键为 `Login` 函数本身，这意味着限流是对 `Login` 函数整体进行限制的。即使调用方来自不同用户、不同地区，只要他们都需要调用 `Login` 函数，都会被同一个限流器影响。
+
+但是有时候，我们希望能自定义实现分区键。例如：实现基于 IP 的限流，那么分区键就是 IP 地址，不同 IP 地址会有独立的限流计数。
+
+### 4.1 自定义限流策略类
+
+首先新建一个类 `RpcFixedWindowLimiter`，继承 `RateLimiterPolicy<string>`，并指定泛型为 `string`，因为我们是基于 IP（字符串类型）限流。
+
+<CustomCodeBlock region="Rpc限流自定义分区键限流器类"/>
+
+### 4.2 注册自定义策略
+
+然后使用 `AddPolicy` 方法，直接添加自定义限流器。
+
+<CustomCodeBlock region="Rpc限流自定义分区键添加策略"/>
+
+### 4.3 使用自定义策略
+
+最后依然使用 `[EnableRateLimiting]` 特性，指定策略名称即可。
+
+<CustomCodeBlock region="Rpc限流使用特性"/>
+
+通过这种方式，你可以实现各种自定义的限流分区策略，例如：
+- 基于 IP 地址限流
+- 基于用户 ID 限流
+- 基于租户 ID 限流
+- 基于设备 ID 限流
+- 等等...
+

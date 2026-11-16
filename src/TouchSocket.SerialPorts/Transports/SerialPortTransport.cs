@@ -1,0 +1,162 @@
+// ------------------------------------------------------------------------------
+// 此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+// 源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+// CSDN博客：https://blog.csdn.net/qq_40374647
+// 哔哩哔哩视频：https://space.bilibili.com/94253567
+// Gitee源代码仓库：https://gitee.com/RRQM_Home
+// Github源代码仓库：https://github.com/RRQM
+// API首页：https://touchsocket.net/
+// 交流QQ群：234762506
+// 感谢您的下载和使用
+// ------------------------------------------------------------------------------
+
+using System.IO.Ports;
+using System.Net.Sockets;
+using TouchSocket.Resources;
+
+namespace TouchSocket.SerialPorts;
+
+internal sealed class SerialPortTransport : BaseTransport
+{
+    private readonly object m_closeTaskLock = new object();
+    private readonly SerialCore m_serialCore;
+    private Task m_shutdownTask;
+
+    public SerialPortTransport(SerialCore serialCore, TransportOption option) : base(option)
+    {
+        this.m_serialCore = serialCore;
+
+        this.Start();
+    }
+
+    public bool IsOpen => !this.m_serialCore.DisposedValue && this.m_serialCore.SerialPort.IsOpen;
+
+    internal SerialCore SerialCore => this.m_serialCore;
+
+    public override async Task<Result> CloseAsync(string msg, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var began = this.TryBeginClose(msg);
+            if (began)
+            {
+                this.SignalClose();
+                this.m_serialCore.Close();
+            }
+
+            Task shutdownTask;
+            lock (this.m_closeTaskLock)
+            {
+                this.m_shutdownTask ??= this.WaitForTransportClosedAsync();
+                shutdownTask = this.m_shutdownTask;
+            }
+
+            await shutdownTask.WithCancellation(cancellationToken).ConfigureDefaultAwait();
+            this.m_serialCore.Dispose();
+            return Result.Success;
+        }
+        catch (Exception ex)
+        {
+            return Result.FromException(ex);
+        }
+    }
+
+    protected override void SafetyDispose(bool disposing)
+    {
+        if (disposing)
+        {
+            this.SignalClose();
+            this.m_serialCore.Dispose();
+        }
+
+        base.SafetyDispose(disposing);
+    }
+
+    protected override async Task RunReceive(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var memory = this.m_pipeReceive.Writer.GetMemory(this.ReceiveBufferSize);
+                var result = await this.m_serialCore.ReceiveAsync(memory, cancellationToken).ConfigureDefaultAwait();
+                if (result.BytesTransferred == 0)
+                {
+                    this.TrySetClosedEventArgs(new ClosedEventArgs(TouchSocketResource.RemoteDisconnects));
+                    await this.m_pipeReceive.Writer.CompleteAsync().ConfigureDefaultAwait();
+                    return;
+                }
+
+                this.m_receiveCounter.Increment(result.BytesTransferred);
+
+                this.m_pipeReceive.Writer.Advance(result.BytesTransferred);
+                var flushResult = await this.m_pipeReceive.Writer.FlushAsync(cancellationToken).ConfigureDefaultAwait();
+                if (flushResult.IsCompleted)
+                {
+                    break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            this.TrySetClosedEventArgs(new ClosedEventArgs(ex.Message, ex));
+            await this.m_pipeReceive.Writer.CompleteAsync(ex).ConfigureDefaultAwait();
+        }
+        finally
+        {
+            // 取消内置接收和发送任务。
+            base.m_tokenSource.SafeCancel();
+        }
+    }
+
+    protected override async Task RunSend(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var readResult = await this.m_pipeSend.Reader.ReadAsync(cancellationToken).ConfigureDefaultAwait();
+                if (readResult.IsCanceled)
+                {
+                    break;
+                }
+
+                if (readResult.IsCompleted && readResult.Buffer.IsEmpty)
+                {
+                    break;
+                }
+
+                try
+                {
+                    foreach (var item in readResult.Buffer)
+                    {
+                        await this.m_serialCore.SendAsync(item, cancellationToken).ConfigureDefaultAwait();
+                    }
+                    
+                    this.m_pipeSend.Reader.AdvanceTo(readResult.Buffer.End);
+
+                    this.m_sentCounter.Increment(readResult.Buffer.Length);
+                }
+                catch (Exception ex)
+                {
+                    // 处理发送失败的情况
+                    this.m_pipeSend.Reader.Complete(ex);
+                    break;
+                }
+
+                if (readResult.IsCompleted)
+                {
+                    break;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            this.m_pipeSend.Reader.Complete(ex);
+        }
+        finally
+        {
+            this.m_pipeSend.Reader.Complete();
+        }
+    }
+}

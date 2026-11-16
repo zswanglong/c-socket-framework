@@ -1,0 +1,328 @@
+/* Definition.css - 白百合蓝色主题定义组件样式 */
+.definition-container {
+  margin: 20px 0 32px 0;
+  padding: 0;
+}
+
+.definition-title {
+  margin: 0 0 16px 0;
+  font-size: 1.3em;
+  font-weight: 600;
+  color: #2d5aa0;
+  color: #2d5aa0;
+}
+
+.definition-content {
+  background: rgba(240, 248, 255, 0.8);
+  border: 1px solid rgba(79, 179, 255, 0.15);
+  border-radius: 16px;
+  padding: 20px 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.definition-content::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: #4fb3ff;
+  border-radius: 2px 0 0 2px;
+}
+
+.definition-content:hover {
+  background: rgba(232, 243, 255, 0.9);
+  border-color: rgba(79, 179, 255, 0.25);
+}
+
+.definition-item {
+  display: flex;
+  align-items: center;
+  margin: 0 0 12px 0;
+  line-height: 1.6;
+}
+
+.definition-item:last-child {
+  margin-bottom: 0;
+}
+
+.description-item {
+  margin-bottom: 16px;
+}
+
+.install-item {
+  margin-bottom: 0;
+}
+
+.definition-label {
+  font-size: 0.95em;
+  font-weight: 500;
+  color: #4f7cb8;
+  margin-right: 8px;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.definition-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+  align-items: center;
+}
+
+.definition-description {
+  font-size: 0.9em;
+  color: #6092b6;
+  line-height: 1.5;
+  flex: 1;
+}
+
+.install-command-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  background: rgba(45, 90, 160, 0.05);
+  border: 1px solid rgba(45, 90, 160, 0.15);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.install-command-container:hover {
+  background: rgba(45, 90, 160, 0.08);
+  border-color: rgba(45, 90, 160, 0.25);
+}
+
+.install-command {
+  font-family: 'Fira Code', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-size: 0.85em;
+  font-weight: 500;
+  color: #2d5aa0;
+  background: none;
+  border: none;
+  padding: 0;
+  flex: 1;
+  user-select: all;
+}
+
+.copy-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: #4f7cb8;
+  color: white;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.copy-button:hover {
+  background: #2d5aa0;
+}
+
+.copy-button.copied {
+  background: #28a745;
+}
+
+.copy-button.copied:hover {
+  background: #28a745;
+}
+
+.definition-value {
+  font-family: 'Fira Code', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-size: 0.9em;
+  font-weight: 500;
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.namespace {
+  background: rgba(79, 179, 255, 0.1);
+  color: #2d5aa0;
+  border: 1px solid rgba(79, 179, 255, 0.2);
+}
+
+.assembly-link {
+  background: rgba(45, 90, 160, 0.08);
+  color: #2d5aa0;
+  text-decoration: none;
+  border: 1px solid rgba(45, 90, 160, 0.15);
+}
+
+.assembly-link:hover {
+  background: rgba(45, 90, 160, 0.12);
+  border-color: rgba(45, 90, 160, 0.25);
+  color: #1e4080;
+  text-decoration: none;
+}
+
+/* 暗色主题适配 */
+[data-theme='dark'] .definition-title {
+  color: #a5c6e0;
+}
+
+[data-theme='dark'] .definition-content {
+  background: rgba(35, 45, 62, 0.8);
+  border: 1px solid rgba(96, 146, 182, 0.2);
+}
+
+[data-theme='dark'] .definition-content::before {
+  background: #8bb4d9;
+}
+
+[data-theme='dark'] .definition-content:hover {
+  background: rgba(52, 68, 88, 0.9);
+  border-color: rgba(96, 146, 182, 0.3);
+}
+
+[data-theme='dark'] .definition-label {
+  color: #8bb4d9;
+}
+
+[data-theme='dark'] .install-command-container {
+  background: rgba(139, 180, 217, 0.08);
+  border: 1px solid rgba(139, 180, 217, 0.2);
+}
+
+[data-theme='dark'] .install-command-container:hover {
+  background: rgba(139, 180, 217, 0.12);
+  border-color: rgba(139, 180, 217, 0.3);
+}
+
+[data-theme='dark'] .install-command {
+  color: #a5c6e0;
+}
+
+[data-theme='dark'] .copy-button {
+  background: #6092b6;
+}
+
+[data-theme='dark'] .copy-button:hover {
+  background: #4f7698;
+}
+
+[data-theme='dark'] .copy-button.copied {
+  background: #28a745;
+}
+
+[data-theme='dark'] .copy-button.copied:hover {
+  background: #28a745;
+}
+
+[data-theme='dark'] .namespace {
+  background: rgba(139, 180, 217, 0.15);
+  color: #a5c6e0;
+  border: 1px solid rgba(139, 180, 217, 0.25);
+}
+
+[data-theme='dark'] .assembly-link {
+  background: rgba(165, 198, 224, 0.12);
+  color: #a5c6e0;
+  border: 1px solid rgba(165, 198, 224, 0.2);
+}
+
+[data-theme='dark'] .assembly-link:hover {
+  background: rgba(165, 198, 224, 0.18);
+  border-color: rgba(165, 198, 224, 0.35);
+  color: #c7dded;
+}
+
+/* 响应式设计 */
+@media screen and (max-width: 768px) {
+  .definition-content {
+    padding: 16px 20px;
+  }
+
+  .definition-item {
+    flex-direction: column;
+    align-items: flex-start;
+    margin-bottom: 16px;
+  }
+
+  .definition-item.description-item {
+    margin-bottom: 16px;
+  }
+
+  .definition-item.install-item {
+    margin-bottom: 0;
+  }
+
+  .definition-label {
+    margin-bottom: 6px;
+    margin-right: 0;
+    min-width: auto;
+  }
+
+  .definition-value {
+    width: 100%;
+    word-break: break-all;
+  }
+
+  .definition-values {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .definition-description {
+    width: 100%;
+  }
+
+  .install-command-container {
+    width: 100%;
+  }
+
+  .install-command {
+    font-size: 0.8em;
+    word-break: break-all;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .definition-container {
+    margin: 16px 0 24px 0;
+  }
+
+  .definition-title {
+    font-size: 1.2em;
+    margin-bottom: 12px;
+  }
+
+  .definition-content {
+    padding: 14px 16px;
+  }
+
+  .definition-label {
+    font-size: 0.9em;
+  }
+
+  .definition-value {
+    font-size: 0.85em;
+  }
+
+  .definition-description {
+    font-size: 0.85em;
+  }
+
+  .install-command {
+    font-size: 0.75em;
+  }
+
+  .copy-button {
+    width: 24px;
+    height: 24px;
+  }
+
+  .copy-button svg {
+    width: 14px;
+    height: 14px;
+  }
+}

@@ -1,0 +1,568 @@
+---
+id: dmtprpc
+title: Rpc功能
+---
+
+import BilibiliCard from '@site/src/components/BilibiliCard.js';
+import { TouchSocketDmtpDefinition } from "@site/src/components/Definition.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+import CardLink from "@site/src/components/CardLink.js";
+
+<TouchSocketDmtpDefinition />
+
+
+## 一、说明
+
+RPC（Remote Procedure Call）远程过程调用协议，一种通过网络从远程计算机上请求服务，而不需要了解底层网络技术的协议。RPC它假定某些协议的存在，例如TPC/UDP等，为通信程序之间携带信息数据。在OSI网络七层模型中，RPC跨越了传输层和应用层，RPC使得开发，包括网络分布式多程序在内的应用程序更加容易。
+
+过程是什么？ 过程就是业务处理、计算任务，更直白的说，就是程序，就是想调用本地方法一样调用远程的过程。
+
+本Rpc是基于Dmtp协议的Rpc组件。其功能包括：
+
+- 支持客户端主动调用服务器。
+- 支持服务主动调用客户端。
+- 支持客户端之间互相调用。
+- 支持绝大多数数据类型及自定义实体类。
+- 支持自定义序列化。
+
+<BilibiliCard title="DmtpRpc简单介绍" link="https://www.bilibili.com/cheese/play/ep1742128" isPro="true"/>
+
+<BilibiliCard title="完成DmtpRpc的基本调用" link="https://www.bilibili.com/cheese/play/ep1742130" isPro="true"/>
+
+<BilibiliCard title="DmtpRpc的调用原理" link="https://www.bilibili.com/cheese/play/ep1742131" isPro="true"/>
+
+## 二、使用Rpc服务
+
+### 2.1 定义服务
+
+在**服务器**端中新建一个类，继承于`SingletonRpcServer`类、或实现`ISingletonRpcServer`。亦或者将服务器声明为**瞬时生命**的服务，继承`TransientRpcServer`、或`ITransientRpcServer`。详情请看:[Rpc服务注册](./rpcregister.mdx)。然后在该类中写**公共方法**，并用`DmtpRpc`属性标签标记。
+
+<CustomCodeBlock region="声明DmtpRpc服务"/>
+
+### 2.2 启动Dmtp并注册Rpc服务
+
+以下仅示例基于Tcp协议Dmtp。其他协议的服务器请看[创建Dmtp服务器](./dmtpservice.mdx)
+
+更多注册Rpc的方法请看[注册Rpc服务](./rpcregister.mdx)
+
+<CustomCodeBlock region="启动TcpDmtpRpc服务器"/>
+
+### 2.3 调用Rpc
+
+#### 2.3.1 创建DmtpRpc客户端
+
+适用于DmtpRpc的客户端其实就是常规的Dmtp客户端，只需要在插件中添加DmtpRpc插件即可。下列以TcpDmtpClient为例，其他客户端请看[创建Dmtp客户端](./dmtpclient.mdx)。
+
+<CustomCodeBlock region="创建DmtpRpc客户端"/>
+
+#### 2.3.1 直接调用
+
+直接调用，则是不使用**任何代理**，使用**字符串**和**参数**直接Call Rpc，使用比较简单。
+
+<CustomCodeBlock region="DmtpRpc直接调用"/>
+
+:::info 信息
+
+直接调用时，泛型参数为`返回值`类型，当没有返回值时则可以不用。
+
+第1个参数为`调用键`，调用键默认情况下为服务类的“`命名空间+类名+方法名`”的`全小写`。但在本案例中直接指定了以“Add”为调用键。
+
+第2个参数为`调用配置`参数，可设置调用超时时间，取消调用等功能。
+
+后续参数为`调用参数`。
+
+:::  
+
+
+#### 2.3.2 代理调用
+
+代理调用的便捷在于，客户端不用再知道哪些服务可调，也不用再纠结调用的参数类型正不正确，因为这些，代理工具都会替你做好。代理的详细使用请看：[Rpc代理生成](./rpcgenerateproxy.mdx)
+
+<BilibiliCard title="使用代理生成文件的方式调用DmtpRpc" link="https://www.bilibili.com/cheese/play/ep1742132" isPro="true"/>
+
+<BilibiliCard title="使用源生成的方式调用DmtpRpc" link="https://www.bilibili.com/cheese/play/ep1742133" isPro="true"/>
+
+
+使用代理扩展直接调用。
+
+<CustomCodeBlock region="DmtpRpc代理调用"/>
+:::tip 提示
+
+client.GetDmtpRpcActor()的操作，内部还需要执行字典的查询操作。所以，如果为效率考虑的话，在连接稳定的前提下，可以保存好client.GetDmtpRpcActor()的返回值对象，直接执行Rpc操作。但是需要的注意的是，一旦重新连接，则该对象也需要重新获取。
+
+:::  
+
+:::tip 代理生成的代码示例
+
+代理生成的代码示例可以参考示例工程中的 `RpcProxy.cs` 文件，或者参考 [Rpc代理生成](./rpcgenerateproxy.mdx) 文档。
+
+:::
+
+## 三、反向Rpc
+
+一般的rpc服务都是客户端发起，服务器响应。但是有时候也需要服务器发起，客户端响应，所以需要反向rpc。
+
+<BilibiliCard title="反向调用DmtpRpc" link="https://www.bilibili.com/cheese/play/ep1742134" isPro="true"/>
+<BilibiliCard title="使用源生成反向调用DmtpRpc" link="https://www.bilibili.com/cheese/play/ep1742135" isPro="true"/>
+
+### 3.1 定义、发布反向Rpc服务
+
+实际上，Dmtp的全称（Duplex Message Transport Protocol双工消息传输协议），Duplex意为双工，则表明，当Dmtp客户端连接到服务以后，拥有与服务器同等的通讯权限与功能。
+
+所以客户端发布Rpc服务的步骤和服务器完全一致。
+
+即：当客户端和服务器建立连接以后，就不再区分谁是客户端，谁是服务器了。只关心，**谁能提供服务，谁在调用服务**。
+
+下列就以简单的示例下，由客户端声明服务，服务器调用服务。
+
+#### 3.1.1 声明反向Rpc服务
+
+具体步骤和服务器端一致。
+
+<CustomCodeBlock region="声明反向DmtpRpc服务"/>
+
+#### 3.1.2 客户端注册发布服务
+
+客户端发布服务的步骤和服务器端一致。
+
+<CustomCodeBlock region="客户端注册反向DmtpRpc服务"/>
+
+### 3.2 调用反向Rpc
+
+服务器回调客户端，最终必须通过**服务器辅助类客户端**（`ISessionClient`的派生类）来执行。
+
+以`TcpDmtpService`为例，其辅助客户端为`TcpDmtpSessionClient`（或其接口：`ITcpDmtpSessionClient`）。
+
+#### 3.2.1 通过服务器直接获取
+
+可以获取所有`TcpDmtpSessionClient`，进行广播式调用。
+
+<CustomCodeBlock region="从TcpDmtp服务器中获取调用客户端"/>
+
+也可以先筛选Id，然后再调用。
+
+#### 3.2.2 通过生命周期获取
+
+一般的，Dmtp会有完整的生命周期管理。例如：`IDmtpConnectedPlugin`、`IDmtpClosedPlugin`等，详情请看：[Dmtp服务器](./dmtpservice.mdx)。
+
+所以可以通过生命周期获取到对应的客户端。此处不再赘述。
+
+#### 3.2.3 通过调用上下文获取
+
+当服务端的的Rpc服务被调用时可以通过调用上下文，获取Caller，即可以获取到对应的客户端。
+
+使用该方式可以实现，当客户端调用服务器的Rpc方法的时候，服务器又回调客户端的Rpc方法。
+
+<CustomCodeBlock region="通过调用上下文获取调用客户端"/>
+
+:::tip 提示
+
+反向Rpc也可以使用代理调用。所有用法和常规Rpc一致。
+
+:::  
+
+
+## 四、客户端互Call Rpc
+
+除了常规Rpc，反向Rpc，DmtpRpc还支持**客户端**之间互Call Rpc。
+
+互Call Rpc的服务的定义与常规Rpc一样。
+
+<BilibiliCard title="客户端互CallRpc" link="https://www.bilibili.com/cheese/play/ep1742136" isPro="true"/>
+<BilibiliCard title="使用源生成客户端互CallRpc" link="https://www.bilibili.com/cheese/play/ep1742137" isPro="true"/>
+
+### 4.1 互Call RPC
+
+客户端1调用客户端2的方法，需要知道对方的**Id**。然后和调用Rpc方法一致。然后使用下列函数调用即可。
+
+<CustomCodeBlock region="DmtpRpc客户端互Call示例"/>
+
+亦或者
+
+<CustomCodeBlock region="DmtpRpc客户端互Call使用目标RpcActor"/>
+
+:::tip 提示
+
+使用上述的CreateTargetDmtpRpcActor()，获取到的targetRpcClient也能使用代理调用Rpc。
+
+:::  
+
+:::tip 提示
+
+互Call Rpc也支持调用上下文。
+
+:::  
+
+:::caution 服务器注意
+
+客户端互Call的时候，每个请求，都需要服务支持路由，且同意路由，才可以被转发。所以服务器需要配置路由策略和添加允许转发的插件。
+
+:::  
+
+配置路由。
+
+<CustomCodeBlock region="DmtpRpc配置路由"/>
+
+同意转发路由数据。
+
+<CustomCodeBlock region="DmtpRpc同意转发路由数据"/>
+
+## 五、调用配置
+
+DmtpRpc支持单次调用配置。单次调用配置，就是在每次调用的时候，使用新建`DmtpInvokeOption`对象，然后在`Invoke`时，传入`invokeOption`即可。
+
+其中详细介绍如下：
+
+### 5.1 FeedbackType
+
+FeedbackType是调用反馈类型，其枚举值分别有OnlySend、WaitSend、WaitInvoke。
+
+- `OnlySend`意为只发送Rpc请求，不进行任何等待。这在通知类调用时是非常快速的。
+- `WaitSend`意为发送Rpc请求，并等待**接收**结果。即，返回时，仅表示对方收到了Rpc请求，但是具体执行如何，则不可知。这一般在不可靠协议中是有用的。
+- `WaitInvoke`意为发送Rpc请求，并等待**执行**结果。即，返回时，表示对方已经执行了Rpc请求，如果有执行返回值，则携带返回值。如果执行过程发生异常，则会将异常返回。
+
+<BilibiliCard title="FeedbackType详解和性能对比测试" link="https://www.bilibili.com/cheese/play/ep1742138" isPro="true"/>
+
+### 5.2 SerializationType (支持AOT)
+
+`SerializationType`是序列化类型，其枚举值有`FastBinary`、`Json`、`Xml`、`SystemBinary`。其特点如下：
+
+| FastBinary  |Json  |Xml  |SystemBinary  |
+| ----  | ----  | ----  | ----  |
+ | 序列化方式速度快，数据量小，但是兼容的数据格式也比较有限。仅支持基础类型、自定义实体类、数组、List、字典 | 兼容性好，可读性强，但是受字符串影响，性能不出众，且数据量受限制 | 兼容性一般，可读性强，同样受字符串影响，性能不出众，且数据量受限制 | 序列化速度快。但是兼容性低。且要求类必须一致，不然需要重新指定图根。 |
+
+ #### 5.2.1 配置默认序列化选择器
+
+ 默认序列化选择器在初始化时，可以配置相关属性。例如：
+
+ - FastSerializerContext：快速序列化上下文属性
+ - JsonSerializerSettings：Json序列化设置属性
+ - SerializationBinder：系统二进制序列化绑定器
+
+ <BilibiliCard title="DmtpRpc使用4种序列化的场景分析" link="https://www.bilibili.com/cheese/play/ep1742141" isPro="true"/>
+
+ 例如：
+
+ <CustomCodeBlock region="DmtpRpc配置序列化选择器"/>
+
+ #### 5.2.2 支持AOT的序列化选择器
+
+ DmtpRpc默认是支持AOT的，但是当参数或返回值是其他类型时，需要对序列化进行一些额外配置。下面介绍的几种就是支持AOT环境的序列化配置方法。
+
+ <BilibiliCard title="配置默认序列化选择器和使用Fast序列化的源生成" link="https://www.bilibili.com/cheese/play/ep1742143" isPro="true"/>
+
+ <BilibiliCard title="在DmtpRpc种使用SystemTextJson源生成" link="https://www.bilibili.com/cheese/play/ep1742144" isPro="true"/>
+
+ <BilibiliCard title="自定义序列化并且使用MemoryPack实践" link="https://www.bilibili.com/cheese/play/ep1742145" isPro="true"/>
+
+
+ #### 5.2.3 自定义序列化
+
+<details>
+<summary>自定义序列化</summary>
+<div>
+
+
+`Dmtp`除了上述的4中内置序列化，还支持自定义序列化。
+
+首先，新建一个类，实现`ISerializationConverter`接口，然后实现相关方法。
+
+下列将使用[MemoryPack](https://www.nuget.org/packages/MemoryPack) 序列化为例。
+
+<CustomCodeBlock region="DmtpRpc自定义序列化配置"/>
+
+然后配置序列化器
+
+<CustomCodeBlock region="DmtpRpc自定义序列化配置"/>
+
+:::caution 注意
+
+序列化器的配置，必须是调用端和响应端**相同的配置**。不然序列化不统一，则无法进行反序列化。
+
+:::  
+
+最后就是使用序列化。
+
+在上述代码中，我们并没有判断SerializationType，所以在调用时无需特指，它都会以MemoryPack序列化工作。
+
+但有时候我们希望能保留内置序列化类型，所以可以参考[内置序列化选择器](https://gitee.com/RRQM_Home/TouchSocket/blob/master/src/TouchSocket.Dmtp/Features/Rpc/Serialization/DefaultSerializationSelector.cs)，然后把新加的序列化再做一次判断。
+
+例如：
+
+```csharp {53-58,135-148} showLineNumbers
+internal sealed class DefaultSerializationSelector : ISerializationSelector
+{
+    /// <summary>
+    /// 根据指定的序列化类型反序列化字节块中的数据。
+    /// </summary>
+    /// <param name="byteBlock">包含序列化数据的字节块。</param>
+    /// <param name="serializationType">指定的序列化类型。</param>
+    /// <param name="parameterType">预期反序列化出的对象类型。</param>
+    /// <returns>反序列化后的对象。</returns>
+    /// <exception cref="RpcException">抛出当未识别序列化类型时。</exception>
+    public object DeserializeParameter<TByteBlock>(ref TByteBlock byteBlock, SerializationType serializationType, Type parameterType) where TByteBlock : IByteBlock
+    {
+        // 根据序列化类型选择不同的反序列化方式
+        switch (serializationType)
+        {
+            case SerializationType.FastBinary:
+                // 使用FastBinary格式进行反序列化
+                return FastBinaryFormatter.Deserialize(ref byteBlock, parameterType);
+            case SerializationType.SystemBinary:
+                // 检查字节块是否为null
+                if (byteBlock.ReadIsNull())
+                {
+                    // 如果为null，则返回该类型的默认值
+                    return parameterType.GetDefault();
+                }
+
+                // 使用SystemBinary格式进行反序列化
+                using (var block = byteBlock.ReadByteBlock(1024*64))
+                {
+                    // 将字节块转换为流并进行反序列化
+                    return SerializeConvert.BinaryDeserialize(block.AsStream());
+                }
+            case SerializationType.Json:
+                // 检查字节块是否为null
+                if (byteBlock.ReadIsNull())
+                {
+                    // 如果为null，则返回该类型的默认值
+                    return parameterType.GetDefault();
+                }
+
+                // 使用Json格式进行反序列化
+                return JsonConvert.DeserializeObject(byteBlock.ReadString(), parameterType);
+
+            case SerializationType.Xml:
+                // 检查字节块是否为null
+                if (byteBlock.ReadIsNull())
+                {
+                    // 如果为null，则返回该类型的默认值
+                    return parameterType.GetDefault();
+                }
+                // 使用Xml格式进行反序列化
+                return SerializeConvert.XmlDeserializeFromBytes(byteBlock.ReadBytesPackage(), parameterType);
+            case (SerializationType)4:
+                {
+                    var Length = byteBlock.ReadInt32();
+                    var span = byteBlock.ReadToSpan(Length);
+                    return MemoryPackSerializer.Deserialize(parameterType, span);
+                }
+            default:
+                // 如果序列化类型未识别，则抛出异常
+                throw new RpcException("未指定的反序列化方式");
+        }
+    }
+
+    /// <summary>
+    /// 序列化参数
+    /// </summary>
+    /// <param name="byteBlock">字节块引用，用于存储序列化后的数据</param>
+    /// <param name="serializationType">序列化类型，决定了使用哪种方式序列化</param>
+    /// <param name="parameter">待序列化的参数对象</param>
+    /// <typeparam name="TByteBlock">字节块类型，必须实现IByteBlock接口</typeparam>
+    public void SerializeParameter<TByteBlock>(ref TByteBlock byteBlock, SerializationType serializationType, in object parameter) where TByteBlock : IByteBlock
+    {
+        // 根据序列化类型选择不同的序列化方法
+        switch (serializationType)
+        {
+            case SerializationType.FastBinary:
+                {
+                    // 使用FastBinaryFormatter进行序列化
+                    FastBinaryFormatter.Serialize(ref byteBlock, parameter);
+                    break;
+                }
+            case SerializationType.SystemBinary:
+                {
+                    // 参数为null时，写入空值标记
+                    if (parameter is null)
+                    {
+                        byteBlock.WriteNull();
+                    }
+                    else
+                    {
+                        // 参数不为null时，标记并序列化参数
+                        byteBlock.WriteNotNull();
+                        using (var block = new ByteBlock(1024 * 64))
+                        {
+                            // 使用System.Runtime.Serialization.BinaryFormatter进行序列化
+                            SerializeConvert.BinarySerialize(block.AsStream(), parameter);
+                            // 将序列化后的字节块写入byteBlock
+                            byteBlock.WriteByteBlock(block);
+                        }
+                    }
+                    break;
+                }
+            case SerializationType.Json:
+                {
+                    // 参数为null时，写入空值标记
+                    if (parameter is null)
+                    {
+                        byteBlock.WriteNull();
+                    }
+                    else
+                    {
+                        // 参数不为null时，标记并转换为JSON字符串
+                        byteBlock.WriteNotNull();
+                        byteBlock.WriteString(JsonConvert.SerializeObject(parameter));
+                    }
+                    break;
+                }
+            case SerializationType.Xml:
+                {
+                    // 参数为null时，写入空值标记
+                    if (parameter is null)
+                    {
+                        byteBlock.WriteNull();
+                    }
+                    else
+                    {
+                        // 参数不为null时，标记并转换为Xml字节
+                        byteBlock.WriteNotNull();
+                        byteBlock.WriteBytesPackage(SerializeConvert.XmlSerializeToBytes(parameter));
+                    }
+                    break;
+                }
+            case (SerializationType)4:
+                {
+                    var pos = byteBlock.Position;
+                    byteBlock.Seek(4, SeekOrigin.Current);
+                    var memoryPackWriter = new MemoryPackWriter<TByteBlock>(ref byteBlock, null);
+
+                    MemoryPackSerializer.Serialize(parameter.GetType(), ref memoryPackWriter, parameter);
+
+                    var newPos = byteBlock.Position;
+                    byteBlock.Position = pos;
+                    byteBlock.WriteInt32(memoryPackWriter.WrittenCount);
+                    byteBlock.Position = newPos;
+
+                    break;
+                }
+            default:
+                // 抛出异常，提示未指定的序列化方式
+                throw new RpcException("未指定的序列化方式");
+        }
+    }
+}
+```
+
+最后在使用时，因为序列化类型是枚举值，所以使用时需要强制转换一下。
+
+<CustomCodeBlock region="DmtpRpc使用自定义序列化类型"/>
+
+[序列化选择器Demo](https://gitee.com/RRQM_Home/TouchSocket/tree/master/examples/Dmtp/SerializationSelectorConsoleApp)
+
+</div>
+</details>
+
+### 5.3 Timeout
+
+Timeout是超时时间，单位是毫秒。
+
+<BilibiliCard title="DmtpRpc的超时设定和CancellationTok" link="https://www.bilibili.com/cheese/play/ep1742140" isPro="true"/>
+
+### 5.4 CancellationToken
+
+CancellationToken是取消令箭源，可用于取消Rpc的调用。
+
+:::tip 提示
+
+取消调用时，其取消消息可以传递到被调用端，所以，被调用端可以通过ICallContext（调用上下文）获取到Token。
+
+:::  
+
+<CustomCodeBlock region="DmtpRpc使用CancellationToken"/>
+
+### 5.5 Metadata 元数据
+
+Metadata是字符串键值对，其作用类似http的headers，用于传递一些附加信息。
+
+<BilibiliCard title="使用Dmtp的Metadata传递自定义消息" link="https://www.bilibili.com/cheese/play/ep1742139" isPro="true"/>
+
+在请求时可以通过DmtpInvokeOption进行传参。
+
+<CustomCodeBlock region="DmtpRpc客户端使用Metadata"/>
+
+在接收可以通过IDmtpCallContext（调用上下文）获取到Metadata。
+
+<CustomCodeBlock region="DmtpRpc使用Metadata"/>
+
+## 六、Rpc大数据传输
+
+> **在Rpc中，并没有对传输的数据做限制，但是因为Rpc默认使用的固定包头适配器中，默认设置的可传递数据为10Mb，所以在Rpc中，用户可一次性传递的数据包大约为9.9Mb。所以，如果用户传递超出阈值的数据，适配器则会触发异常，而无法接收。但在实际上Rpc的使用中，大数据的传输也是很重要的一个环节，所以在此做了大数据的传输思路建议，希望能有效解决大家的麻烦。**
+
+
+<BilibiliCard title="DmtpRpc结合Channel发送和接受大数据包" link="https://www.bilibili.com/cheese/play/ep1742147" isPro="true"/>
+
+<a name="DU9Pj"></a>
+
+### 6.1 设置适配器参数（推荐指数：⭐）
+
+> 操作原理：在固定包头适配器中，默认限制了单次可发送数据包的最大值，所以可以修改此值实现目的。
+
+该方法简单粗暴，能够解决一定程度的大数据问题，但并不建议这么做。
+
+<CustomCodeBlock region="DmtpRpc设置最大包大小"/>
+
+:::caution 注意
+
+客户端必须同样设置。
+
+:::  
+
+
+### 6.2 Rpc嵌套Channel（推荐指数：⭐⭐⭐⭐⭐）
+
+> 操作原理：先利用Rpc让客户端与服务器约定特定的Channel，然后后续数据通过Channel传递，最后由Rpc返回结果。
+
+<a name="FuEck"></a>
+
+#### 6.2.1 请求流数据
+
+【Service端】
+
+<CustomCodeBlock region="DmtpRpc服务端请求流数据"/>
+
+【Client端】
+
+<CustomCodeBlock region="DmtpRpc客户端请求流数据"/>
+
+<a name="GmNPl"></a>
+
+#### 6.2.2 推送流数据
+
+【Service端】
+
+<CustomCodeBlock region="DmtpRpc服务端推送流数据"/>
+
+【Client端】
+
+<CustomCodeBlock region="DmtpRpc客户端推送流数据"/>
+
+## 七、限制代理接口
+
+默认情况下，代理生成的接口，是面向`IRpcClient`的，即：面向所有`Rpc终端`。但是有时候我们希望不同的终端，只能调用不同的方法。甚至有时候希望，不同的终端可以重载方法。所以如果不对生成的接口做限制，就可能发生下图问题。
+
+<img src={require("@site/static/img/docs/dmtprpc-1.png").default} />
+
+关于代理代码生成接口限制，请看[服务代理生成](./rpcgenerateproxy.mdx)或者[源服务代理生成](./rpcgenerateproxy.mdx)
+
+接下来就讲讲客户端如何实现接口限制。
+
+首先按需求，声明多个继承`IDmtpRpcActor`的接口，此处有`IRpcClient1`与`IRpcClient2`两个。
+
+然后新建类，命名为`MyDmtpRpcActor`，继承`DmtpRpcActor`，然后分别实现`IRpcClient1`与`IRpcClient2`两个接口。
+
+<CustomCodeBlock region="DmtpRpc限制代理接口声明"/>
+
+然后在`UseDmtpRpc`时，设置`SetCreateDmtpRpcActor`，这样获得的实际实例则会是`MyDmtpRpcActor`类型。
+
+<CustomCodeBlock region="DmtpRpc限制代理接口配置"/>
+
+最后在获得RpcActor时，就可以按接口获取。然后配合服务器代码接口约束，就可以实现我们所期望的功能。
+
+<CustomCodeBlock region="DmtpRpc限制代理接口使用"/>
+
+## 八、示例Demo
+
+<CardLink link="examples/Dmtp/DmtpRpcServerConsoleApp" isPro="true"/>

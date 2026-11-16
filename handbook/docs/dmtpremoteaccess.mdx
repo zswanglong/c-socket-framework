@@ -1,0 +1,49 @@
+---
+id: dmtpremoteaccess
+title: 远程文件系统
+---
+import Tag from "@site/src/components/Tag.js";
+import Pro from "@site/src/components/Pro.js";
+import CardLink from "@site/src/components/CardLink.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+## 一、说明 <Pro/> 
+
+使用该插件，可以访问远程终端的文件系统。包括：创建、删除、复制、移动、获取信息等。
+
+## 二、使用
+
+该功能由`RemoteAccessFeature`功能插件提供。所以需要`客户端`和`服务器`都需要`UseRemoteAccess`。
+
+<CustomCodeBlock region="远程文件系统配置插件"/>
+
+以获取文件夹信息为例：
+
+【请求端】
+
+任意Dmtp终端均可以调用GetRemoteAccessActor创建一个访问器。
+
+同时可以传递一个元数据组。用于载入自定义消息。
+
+<CustomCodeBlock region="远程文件系统获取目录信息"/>
+
+:::tip 提示
+
+此处可以访问远程终端的文件系统。包括：创建、删除、复制、移动、获取信息等
+
+:::  
+
+
+【响应端】
+
+响应端定义一个插件，实现`IDmtpRemoteAccessingPlugin`，然后实现接口。
+
+<CustomCodeBlock region="远程文件系统响应端插件"/>
+
+:::caution 警告
+
+远程文件系统访问，是属于比较隐私的功能，所以在开发这功能时，应该取得被访问端的访问许可，所以在每次访问时，都必须对`e.IsPermitOperation = true`做确认动作。
+
+:::  
+
+<CardLink link="examples/Dmtp/RemoteAccessApp"/>

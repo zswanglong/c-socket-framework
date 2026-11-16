@@ -1,0 +1,7 @@
+.footerLogoLink {
+  opacity: 0.5;
+}
+
+.footerLogoLink:hover {
+  opacity: 1;
+}

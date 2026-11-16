@@ -1,0 +1,82 @@
+//------------------------------------------------------------------------------
+//  此代码版权（除特别声明或在XREF结尾的命名空间的代码）归作者本人若汝棋茗所有
+//  源代码使用协议遵循本仓库的开源协议及附加协议，若本仓库没有设置，则按MIT开源协议授权
+//  CSDN博客：https://blog.csdn.net/qq_40374647
+//  哔哩哔哩视频：https://space.bilibili.com/94253567
+//  Gitee源代码仓库：https://gitee.com/RRQM_Home
+//  Github源代码仓库：https://github.com/RRQM
+//  API首页：https://touchsocket.net/
+//  交流QQ群：234762506
+//  感谢您的下载和使用
+//------------------------------------------------------------------------------
+
+using System.Diagnostics.CodeAnalysis;
+using System.Xml;
+using TouchSocket.Http;
+using TouchSocket.Rpc;
+
+namespace TouchSocket.XmlRpc;
+
+/// <summary>
+/// XmlRpc客户端
+/// </summary>
+public class XmlRpcClient : HttpClientBase, IXmlRpcClient
+{
+    private readonly SemaphoreSlim m_semaphoreSlim = new SemaphoreSlim(1, 1);
+    /// <inheritdoc/>
+    public async Task ConnectAsync(CancellationToken cancellationToken)
+    {
+        await this.m_semaphoreSlim.WaitAsync(cancellationToken).ConfigureDefaultAwait();
+        try
+        {
+            await base.HttpConnectAsync(cancellationToken).ConfigureDefaultAwait();
+        }
+        finally
+        {
+            this.m_semaphoreSlim.Release();
+        }
+    }
+
+    /// <inheritdoc/>
+    [UnconditionalSuppressMessage("ReflectionAnalysis", "IL2067",
+        Justification = "returnType 由调用方在运行时动态传入，无法静态标注。")]
+    [UnconditionalSuppressMessage("AotAnalysis", "IL3050",
+        Justification = "GetValue 方法用于 XML-RPC 动态类型传递，不适用于 Native AOT 场景。")]
+    public async Task<object> InvokeAsync(string invokeKey, Type returnType, InvokeOption invokeOption, params object[] parameters)
+    {
+        invokeOption ??= InvokeOption.WaitInvoke;
+
+        using (var byteBlock = new ByteBlock(1024 * 64))
+        {
+            var request = XmlDataTool.CreateRequest(this, invokeKey, parameters);
+
+            using (var responseResult = await this.ProtectedRequestAsync(request, invokeOption.Token).ConfigureDefaultAwait())
+            {
+                var response = responseResult.Response;
+
+                if (invokeOption.FeedbackType != FeedbackType.WaitInvoke)
+                {
+                    return default;
+                }
+
+                if (response.StatusCode != 200)
+                {
+                    throw new Exception(response.StatusMessage);
+                }
+                else
+                {
+
+                    if (returnType != null)
+                    {
+                        var xml = new XmlDocument();
+                        xml.LoadXml(await response.GetBodyAsync().ConfigureDefaultAwait());
+                        var paramNode = xml.SelectSingleNode("methodResponse/params/param");
+                        return paramNode != null ? XmlDataTool.GetValue(paramNode.FirstChild.FirstChild, returnType) : default;
+                    }
+
+                    return default;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFrameworks>net462;netstandard2.0;netstandard2.1;net6.0;net10.0;net8.0</TargetFrameworks>
+		<PackageTags>Swagger;TouchSocket</PackageTags>
+		<Description>这是适用于TouchSocket.WebApi的Swagger页面，可以直接在浏览器调试WebApi。
+
+说明文档：https://touchsocket.net/	</Description>
+		<Title>TouchSocket.WebApi.Swagger</Title>
+	</PropertyGroup>
+  <ItemGroup>
+    <None Remove="api\*.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="api\*.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TouchSocket.WebApi\TouchSocket.WebApi.csproj" />
+  </ItemGroup>
+
+</Project>

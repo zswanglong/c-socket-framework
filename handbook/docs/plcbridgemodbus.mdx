@@ -1,0 +1,138 @@
+---
+id: plcbridgemodbus
+title: PlcBridge Modbus 集成指南
+---
+
+import Pro from "@site/src/components/Pro.js";
+
+import CardLink from "@site/src/components/CardLink.js";
+import Definition from "@site/src/components/Definition.js";
+import CustomCodeBlock from './CodeBlocks/CustomCodeBlock';
+
+
+<Definition namespace="TouchSocketPro.Modbus <Pro/>  <br/>" assemblies={["TouchSocketPro.PlcBridges.dll","TouchSocketPro.Modbus.dll"]} />
+
+
+## 一、说明
+
+TouchSocket PLC Bridge 提供了强大的工业自动化设备集成能力，尤其适合处理**多协议**、**多设备**的复杂场景。本指南将结合示例代码，详细说明如何使用 PLC Bridge 整合 Modbus TCP、UDP 和串口设备，创建一个统一的设备访问接口。
+
+## 二、核心优势
+
+1. **统一访问接口**：通过单一API访问多种Modbus设备（TCP/UDP/串口）
+2. **智能数据映射**：将不同设备的寄存器地址映射到统一的虚拟地址空间
+3. **高性能处理**：自动合并读写请求，优化通信效率
+4. **类型安全访问**：支持复杂数据类型（long, float等）的自动转换
+5. **可扩展架构**：轻松添加新设备或调整配置
+
+## 三、准备工作
+
+### 3.1 硬件环境
+
+- Modbus TCP 设备（端口502）
+- Modbus UDP 设备（端口503）
+- Modbus 串口设备（COM2）
+- 安装 Modbus 设备模拟器
+
+
+## 四、设备桥接实现步骤
+
+### 4.1 初始化 PLC Bridge 服务
+
+<CustomCodeBlock region="PlcBridge初始化服务"/>
+
+### 4.2 配置 Modbus TCP 设备桥接
+
+首先需要连接 TCP Modbus 设备：
+
+<CustomCodeBlock region="PlcBridge配置ModbusTCP设备连接"/>
+
+然后添加设备驱动器，映射第一个寄存器区段（虚拟地址 0-20，对应物理设备地址 0-20）：
+
+<CustomCodeBlock region="PlcBridge添加ModbusTCP设备驱动1"/>
+
+映射第二个寄存器区段（虚拟地址 20-40，对应物理设备地址 50-70）：
+
+<CustomCodeBlock region="PlcBridge添加ModbusTCP设备驱动2"/>
+
+### 4.3 配置 Modbus UDP 设备桥接
+
+<CustomCodeBlock region="PlcBridge配置ModbusUDP设备"/>
+
+### 4.4 配置 Modbus 串口设备桥接
+
+<CustomCodeBlock region="PlcBridge配置Modbus串口设备"/>
+
+### 4.5 启动桥接服务
+
+<CustomCodeBlock region="PlcBridge启动服务"/>
+
+## 五、创建统一访问接口
+
+### 5.1 定义 PLC 数据对象
+
+使用 `PlcObject` 类和 `PlcField` 特性定义数据映射：
+
+<CustomCodeBlock region="PlcBridge定义PlcObject数据对象"/>
+
+### 5.2 使用 PLC 数据对象
+
+<CustomCodeBlock region="PlcBridge使用PlcObject读写数据"/>
+
+## 六、自定义驱动器实现
+
+通过继承 `ModbusHoldingRegistersDrive` 可以实现自定义的读写逻辑，例如添加日志记录、数据校验等功能：
+
+<CustomCodeBlock region="PlcBridge自定义驱动器实现"/>
+
+## 七、执行流程
+
+### 7.1 初始化阶段
+
+- 创建 PLC Bridge 服务
+- 配置并添加各设备驱动器
+- 启动桥接服务
+
+### 7.2 数据访问阶段
+
+- 通过统一接口读写数据
+- PLC Bridge 自动处理：
+    * 地址映射转换
+    * 请求合并优化
+    * 数据类型转换
+    * 多设备协同
+
+### 7.3 资源释放
+
+<CustomCodeBlock region="PlcBridge释放资源"/>
+
+## 八、典型应用场景
+
+1. **跨设备数据采集**：同时从不同协议的设备读取数据
+2. **集中控制**：通过单一接口控制多个设备
+3. **数据聚合**：将不同设备的数据合并处理
+4. **协议转换**：将不同协议统一为标准接口
+5. **设备热插拔**：动态添加/移除设备不影响系统运行
+
+## 九、性能优化建议
+
+1. **分组策略**：对实时性要求高的设备使用独立组
+2. **批量处理**：使用`ReadOnlyMemory`进行批量读写
+3. **地址规划**：将相邻地址分配到同一设备驱动器
+4. **缓存机制**：对低频变化数据实现读取缓存
+5. **连接复用**：同协议设备共享Master连接
+
+## 十、总结
+
+TouchSocket PLC Bridge 通过：
+1. **统一访问层** 抽象底层设备差异
+2. **智能地址映射** 简化多设备协同
+3. **自动优化** 提升通信效率
+4. **强类型接口** 保证数据一致性
+5. **可扩展架构** 支持灵活定制
+
+解决了工业自动化中多协议设备集成的核心挑战，是构建复杂工业控制系统的理想选择。
+
+## 十一、本文示例
+
+<CardLink link="examples/PlcBridges/ModbusPlcBridgeConsoleApp"/>
